@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { uploadFileToS3, isWhatsAppSupportedFileType } from '@/lib/aws-s3';
+import { uploadFileToS3, isWhatsAppSupportedFileType } from '@/lib/r2-storage';
 
 export const runtime = 'nodejs';
 

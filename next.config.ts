@@ -4,47 +4,20 @@ const nextConfig: NextConfig = {
   output: 'standalone',
   images: {
     remotePatterns: [
-      // AWS S3 regional patterns
+      // Cloudflare R2 (S3 API) — presigned GET URLs
       {
         protocol: 'https',
-        hostname: '**.s3.*.amazonaws.com',
+        hostname: '**.r2.cloudflarestorage.com',
         port: '',
         pathname: '/**',
       },
-      // Your specific S3 bucket
+      // Optional: public bucket on *.r2.dev
       {
         protocol: 'https',
-        hostname: 'wassupchat.s3.ap-south-1.amazonaws.com',
+        hostname: '**.r2.dev',
         port: '',
         pathname: '/**',
       },
-      // Generic S3 patterns
-      {
-        protocol: 'https',
-        hostname: 's3.amazonaws.com',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: '*.s3.amazonaws.com',
-        port: '',
-        pathname: '/**',
-      },
-      // S3 with region patterns
-      {
-        protocol: 'https',
-        hostname: 's3-*.amazonaws.com',
-        port: '',
-        pathname: '/**',
-      },
-      // Additional S3 patterns for different regions
-      {
-        protocol: 'https',
-        hostname: 's3.*.amazonaws.com',
-        port: '',
-        pathname: '/**',
-      }
     ],
   },
 };

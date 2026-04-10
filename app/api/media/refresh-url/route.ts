@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { generatePresignedUrl } from '@/lib/aws-s3';
+import { generatePresignedUrl } from '@/lib/r2-storage';
 
 export const runtime = 'nodejs';
 

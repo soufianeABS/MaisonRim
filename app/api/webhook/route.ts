@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/server';
-import { downloadAndUploadToS3 } from '@/lib/aws-s3';
+import { downloadAndUploadToS3 } from '@/lib/r2-storage';
 
 export const runtime = 'nodejs';
 
