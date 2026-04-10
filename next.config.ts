@@ -3,9 +3,15 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   webpack: (config, { webpack, nextRuntime }) => {
-    // Edge middleware has no Node `__dirname` / `__filename`; some deps still reference them.
+    // Edge has no Node `__dirname`; some transitive code still references it.
+    // Run early (unshift). Banner covers cases DefinePlugin misses on some hosts.
     if (nextRuntime === "edge") {
-      config.plugins.push(
+      config.plugins.unshift(
+        new webpack.BannerPlugin({
+          banner: 'var __dirname="/";var __filename="/middleware.js";',
+          raw: true,
+          entryOnly: true,
+        }),
         new webpack.DefinePlugin({
           __dirname: JSON.stringify("/"),
           __filename: JSON.stringify("/middleware.js"),
