@@ -1,10 +1,10 @@
 import { updateSession } from "@/lib/supabase/middleware";
-import { type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 export async function middleware(request: NextRequest) {
   // Update the session for all routes except the webhook
   if (request.nextUrl.pathname.startsWith("/api/webhook")) {
-    return;
+    return NextResponse.next();
   }
   return await updateSession(request);
 }
