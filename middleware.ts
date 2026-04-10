@@ -2,14 +2,19 @@ import { updateSession } from "./lib/supabase/middleware";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function middleware(request: NextRequest) {
-  // Update the session for all routes except the webhook
-  if (request.nextUrl.pathname.startsWith("/api/webhook")) {
+  try {
+    if (request.nextUrl.pathname.startsWith("/api/webhook")) {
+      return NextResponse.next();
+    }
+    return await updateSession(request);
+  } catch (err) {
+    console.error("[middleware]", err);
     return NextResponse.next();
   }
-  return await updateSession(request);
 }
 
 export const config = {
+  runtime: 'nodejs',
   matcher: [
     /*
      * Match all request paths except:

@@ -27,15 +27,19 @@ async function combineChunks(
 }
 
 /** Base64-URL → UTF-8 string (session JSON); Edge-safe, no Node Buffer. */
-function stringFromBase64URL(b64url: string): string {
-  const pad = b64url.length % 4 === 0 ? "" : "=".repeat(4 - (b64url.length % 4));
-  const b64 = (b64url + pad).replace(/-/g, "+").replace(/_/g, "/");
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+function stringFromBase64URL(b64url: string): string | null {
+  try {
+    const pad = b64url.length % 4 === 0 ? "" : "=".repeat(4 - (b64url.length % 4));
+    const b64 = (b64url + pad).replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
   }
-  return new TextDecoder().decode(bytes);
 }
 
 function getProjectRef(supabaseUrl: string): string {
@@ -81,9 +85,13 @@ async function getUserFromRequest(
     typeof chunkedCookie === "string" &&
     chunkedCookie.startsWith(BASE64_PREFIX)
   ) {
-    decoded = stringFromBase64URL(
+    const fromB64 = stringFromBase64URL(
       chunkedCookie.substring(BASE64_PREFIX.length),
     );
+    if (fromB64 === null) {
+      return null;
+    }
+    decoded = fromB64;
   }
 
   let session: { access_token?: string };
@@ -98,19 +106,23 @@ async function getUserFromRequest(
     return null;
   }
 
-  const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      apikey: anonKey,
-    },
-  });
+  try {
+    const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        apikey: anonKey,
+      },
+    });
 
-  if (!res.ok) {
+    if (!res.ok) {
+      return null;
+    }
+
+    const body = (await res.json()) as { id?: string };
+    return body.id ? { id: body.id } : null;
+  } catch {
     return null;
   }
-
-  const body = (await res.json()) as { id?: string };
-  return body.id ? { id: body.id } : null;
 }
 
 export async function updateSession(request: NextRequest) {
