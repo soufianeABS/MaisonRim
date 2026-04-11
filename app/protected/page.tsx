@@ -41,6 +41,23 @@ interface MessagePayload {
   timestamp: string;
   message_type?: string;
   media_data?: string | null;
+  /** DB column: WhatsApp rows use contact phone as sender_id for both inbound and outbound. */
+  is_sent_by_me?: boolean | null;
+  is_read?: boolean | null;
+}
+
+/**
+ * Outgoing API/webhook rows store sender_id = contact phone and receiver_id = business user for
+ * both directions; use DB is_sent_by_me when present.
+ */
+function isMessageFromCurrentUser(
+  msg: Pick<MessagePayload, 'sender_id' | 'is_sent_by_me'>,
+  currentUserId: string
+): boolean {
+  if (msg.is_sent_by_me !== undefined && msg.is_sent_by_me !== null) {
+    return Boolean(msg.is_sent_by_me);
+  }
+  return msg.sender_id === currentUserId;
 }
 
 interface UnreadConversation {
@@ -249,7 +266,7 @@ export default function ChatPage() {
           setUsers((prevUsers) => {
             const updatedUsers = prevUsers.map(u => {
               if (u.id === otherUserId) {
-                const isFromMe = message.sender_id === user?.id;
+                const isFromMe = isMessageFromCurrentUser(message, user?.id ?? '');
                 // Don't increment unread count if this conversation is currently open
                 const isCurrentlyViewing = selectedUser?.id === otherUserId;
                 const shouldIncrementUnread = !isFromMe && !isCurrentlyViewing;
@@ -313,11 +330,10 @@ export default function ChatPage() {
       } else {
         console.log(`Fetched ${data?.length || 0} messages`);
         // Map message_timestamp back to timestamp for the interface and ensure is_sent_by_me is set
-        const mappedMessages = (data || []).map((msg: MessagePayload & { message_timestamp?: string; is_sent_by_me?: boolean }) => ({
+        const mappedMessages = (data || []).map((msg: MessagePayload & { message_timestamp?: string }) => ({
           ...msg,
           timestamp: msg.message_timestamp || msg.timestamp,
-          // Ensure is_sent_by_me is always set correctly
-          is_sent_by_me: msg.is_sent_by_me !== undefined ? msg.is_sent_by_me : msg.sender_id === user.id
+          is_sent_by_me: isMessageFromCurrentUser(msg, user.id),
         }));
         setMessages(mappedMessages);
         
@@ -356,10 +372,10 @@ export default function ChatPage() {
         if (isRelevantMessage) {
           console.log('Adding message to conversation');
           
-          // Determine if this message was sent by the current user
-          const messageWithFlag = {
+          const sentByMe = isMessageFromCurrentUser(newMessage, user.id);
+          const messageWithFlag: Message = {
             ...newMessage,
-            is_sent_by_me: newMessage.sender_id === user.id,
+            is_sent_by_me: sentByMe,
             timestamp: newMessage.timestamp || new Date().toISOString()
           };
           
@@ -372,10 +388,13 @@ export default function ChatPage() {
           });
           
           setMessages((prev) => {
-            // Avoid duplicates (check for both regular ID and optimistic ID)
-            const exists = prev.find(m => 
-              m.id === messageWithFlag.id || 
-              (m.id.startsWith('optimistic_') && m.content === messageWithFlag.content && m.timestamp === messageWithFlag.timestamp)
+            // Avoid duplicates (same WhatsApp id, or replace optimistic same content / outbound)
+            const exists = prev.find(m =>
+              m.id === messageWithFlag.id ||
+              (m.id.startsWith('optimistic_') &&
+                m.is_sent_by_me &&
+                messageWithFlag.is_sent_by_me &&
+                m.content === messageWithFlag.content)
             );
             
             if (exists) {
@@ -393,8 +412,8 @@ export default function ChatPage() {
             );
           });
 
-          // Mark message as read if it's from the other user
-          if (newMessage.sender_id === selectedUser.id) {
+          // Mark message as read if we received it (not an outbound row)
+          if (!messageWithFlag.is_sent_by_me) {
             setTimeout(() => {
               fetch('/api/messages/mark-read', {
                 method: 'POST',
@@ -420,9 +439,9 @@ export default function ChatPage() {
           (updatedMessage.sender_id === selectedUser.id && updatedMessage.receiver_id === user.id);
         
         if (isRelevantMessage) {
-          const messageWithFlag = {
+          const messageWithFlag: Message = {
             ...updatedMessage,
-            is_sent_by_me: updatedMessage.sender_id === user.id,
+            is_sent_by_me: isMessageFromCurrentUser(updatedMessage, user.id),
             timestamp: updatedMessage.timestamp || new Date().toISOString()
           };
           
@@ -823,10 +842,21 @@ export default function ChatPage() {
       }
 
       console.log('Message sent successfully:', result);
-      
-      // The message will be replaced by the real one via real-time subscription
-      // The subscription handler will detect the optimistic ID and replace it
-      
+
+      // Swap optimistic row for real id/timestamp so UI clears "Sending..." and realtime dedupes
+      if (result.messageId) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === optimisticId
+              ? {
+                  ...m,
+                  id: result.messageId as string,
+                  timestamp: (result.timestamp as string) || m.timestamp,
+                }
+              : m
+          )
+        );
+      }
     } catch (error) {
       console.error('Error sending message:', error);
       
