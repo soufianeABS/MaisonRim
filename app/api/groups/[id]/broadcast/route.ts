@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logWhatsAppGraphCall } from '@/lib/whatsapp-graph-debug';
 
 /**
  * POST - Broadcast a message to all group members
@@ -154,6 +155,15 @@ export async function POST(
             }
           };
 
+          logWhatsAppGraphCall(`broadcast: POST /messages (template) → ${cleanPhoneNumber}`, {
+            url: whatsappApiUrl,
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            jsonBody: templateMessage,
+          });
+
           whatsappResponse = await fetch(whatsappApiUrl, {
             method: 'POST',
             headers: {
@@ -246,6 +256,15 @@ export async function POST(
               body: message
             }
           };
+
+          logWhatsAppGraphCall(`broadcast: POST /messages (text) → ${cleanPhoneNumber}`, {
+            url: whatsappApiUrl,
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            jsonBody: textMessage,
+          });
 
           whatsappResponse = await fetch(whatsappApiUrl, {
             method: 'POST',

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logWhatsAppGraphCall } from '@/lib/whatsapp-graph-debug';
 
 interface SendTemplateRequest {
   to: string;
@@ -108,6 +109,15 @@ async function sendTemplateMessage(
     };
 
     console.log('Sending template message:', JSON.stringify(messageData, null, 2));
+
+    logWhatsAppGraphCall('send-template: POST /messages (template)', {
+      url: whatsappApiUrl,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      jsonBody: messageData,
+    });
 
     const response = await fetch(whatsappApiUrl, {
       method: 'POST',

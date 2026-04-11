@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { uploadFileToS3, isWhatsAppSupportedFileType } from '@/lib/r2-storage';
+import { logWhatsAppGraphCall } from '@/lib/whatsapp-graph-debug';
 
 export const runtime = 'nodejs';
 
@@ -31,8 +32,17 @@ async function uploadMediaToWhatsApp(
     formData.append('type', file.type);
     formData.append('messaging_product', 'whatsapp');
 
+    const mediaUploadUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/media`;
+    logWhatsAppGraphCall('send-media: POST /media (upload)', {
+      url: mediaUploadUrl,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      multipartSummary: `FormData fields: file(name=${file.name}, type=${file.type}, size=${file.size}), type=${file.type}, messaging_product=whatsapp`,
+    });
+
     const uploadResponse = await fetch(
-      `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/media`,
+      mediaUploadUrl,
       {
         method: 'POST',
         headers: {
@@ -133,6 +143,15 @@ async function sendMediaMessage(
       default:
         throw new Error(`Unsupported media type: ${mediaType}`);
     }
+
+    logWhatsAppGraphCall('send-media: POST /messages (media)', {
+      url: whatsappApiUrl,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      jsonBody: messageData,
+    });
 
     const response = await fetch(whatsappApiUrl, {
       method: 'POST',

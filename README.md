@@ -561,13 +561,16 @@ BEGIN
     m.receiver_id,
     m.content,
     m.timestamp as message_timestamp,
-    (m.sender_id = (SELECT id FROM auth.users() LIMIT 1)) as is_sent_by_me,
+    COALESCE(m.is_sent_by_me, m.sender_id = auth.uid()::text) as is_sent_by_me,
     m.message_type,
     m.media_data,
     m.is_read,
     m.read_at
   FROM messages m
-  WHERE (m.sender_id = other_user_id OR m.receiver_id = other_user_id)
+  WHERE (
+    (m.sender_id = other_user_id AND m.receiver_id = auth.uid()::text)
+    OR (m.receiver_id = other_user_id AND m.sender_id = auth.uid()::text)
+  )
   ORDER BY m.timestamp ASC;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

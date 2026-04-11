@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { createClient } from '@/lib/supabase/server';
+import { logWhatsAppGraphCall } from '@/lib/whatsapp-graph-debug';
 
 /**
  * POST handler for sending WhatsApp messages
@@ -52,7 +53,7 @@ export async function POST(request: NextRequest) {
     // Get user's WhatsApp API credentials
     const { data: settings, error: settingsError } = await supabase
       .from('user_settings')
-      .select('access_token, phone_number_id, api_version, access_token_added, phone_number')
+      .select('access_token, phone_number_id, api_version, access_token_added')
       .eq('id', user.id)
       .single();
 
@@ -95,6 +96,15 @@ export async function POST(request: NextRequest) {
       userId: user.id
     });
 
+    logWhatsAppGraphCall('send-message: POST /messages (text)', {
+      url: whatsappApiUrl,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      jsonBody: messageData,
+    });
+
     // Send message via WhatsApp Cloud API using user-specific access token
     const whatsappResponse = await fetch(whatsappApiUrl, {
       method: 'POST',
@@ -111,11 +121,24 @@ export async function POST(request: NextRequest) {
 
     if (!whatsappResponse.ok) {
       console.error('WhatsApp API error:', responseData);
+      const metaErr = responseData?.error as
+        | { message?: string; code?: number; type?: string }
+        | undefined;
+      const metaMessage =
+        typeof metaErr?.message === 'string' ? metaErr.message : null;
+      const tokenExpired =
+        metaErr?.code === 190 ||
+        (metaMessage?.toLowerCase().includes('access token') ?? false);
+      const errorText = metaMessage
+        ? tokenExpired
+          ? `${metaMessage} Update your WhatsApp access token in Settings (Meta → Developers → your app → WhatsApp → API Setup).`
+          : metaMessage
+        : 'Failed to send message via WhatsApp API';
       return NextResponse.json(
-        { 
-          error: 'Failed to send message via WhatsApp API', 
-          details: responseData 
-        }, 
+        {
+          error: errorText,
+          details: responseData,
+        },
         { status: whatsappResponse.status }
       );
     }
