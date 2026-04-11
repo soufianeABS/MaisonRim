@@ -32,7 +32,8 @@ export async function POST(request: NextRequest) {
 
     // Call the database function to mark messages as read
     const { data, error } = await supabase.rpc('mark_messages_as_read', {
-      other_user_id: otherUserId
+      current_user_id: user.id,
+      other_user_id: otherUserId,
     });
 
     if (error) {

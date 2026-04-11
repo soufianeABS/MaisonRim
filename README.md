@@ -659,7 +659,7 @@ BEGIN
       (SELECT COUNT(*) 
        FROM messages m 
        WHERE m.sender_id = gm.user_id 
-       AND m.receiver_id = (SELECT id FROM auth.users() LIMIT 1)
+       AND m.receiver_id = auth.uid()::text
        AND m.is_read = false
       )
     ), 0) AS unread_count,

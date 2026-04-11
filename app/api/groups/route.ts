@@ -17,8 +17,9 @@ export async function GET() {
     }
 
     // Get groups with member counts using the database function
-    const { data: groups, error: groupsError } = await supabase
-      .rpc('get_user_groups_with_counts', { user_uuid: user.id });
+    const { data: groups, error: groupsError } = await supabase.rpc(
+      'get_user_groups_with_counts'
+    );
 
     if (groupsError) {
       console.error('Error fetching groups:', groupsError);

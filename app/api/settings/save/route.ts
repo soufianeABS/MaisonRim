@@ -237,25 +237,24 @@ export async function GET() {
 
     // Return settings (or null if not found)
     return NextResponse.json({
-      settings: updatedSettings ? {
-        access_token_added: updatedSettings.access_token_added,
-        webhook_verified: updatedSettings.webhook_verified,
-        api_version: updatedSettings.api_version,
-        phone_number: updatedSettings.phone_number,
-        full_name: updatedSettings.full_name,
-        has_access_token: !!updatedSettings.access_token,
-        has_phone_number_id: !!updatedSettings.phone_number_id,
-        has_business_account_id: !!updatedSettings.business_account_id,
-        has_verify_token: !!updatedSettings.verify_token,
-        webhook_token: updatedSettings.webhook_token,
-        // Include actual values for display in setup page
-        access_token: updatedSettings.access_token,
-        phone_number_id: updatedSettings.phone_number_id,
-        business_account_id: updatedSettings.business_account_id,
-        verify_token: updatedSettings.verify_token,
-        created_at: updatedSettings.created_at,
-        updated_at: updatedSettings.updated_at,
-      } : null,
+      settings: updatedSettings
+        ? {
+            access_token_added: updatedSettings.access_token_added,
+            webhook_verified: updatedSettings.webhook_verified,
+            api_version: updatedSettings.api_version,
+            has_access_token: !!updatedSettings.access_token,
+            has_phone_number_id: !!updatedSettings.phone_number_id,
+            has_business_account_id: !!updatedSettings.business_account_id,
+            has_verify_token: !!updatedSettings.verify_token,
+            webhook_token: updatedSettings.webhook_token,
+            access_token: updatedSettings.access_token,
+            phone_number_id: updatedSettings.phone_number_id,
+            business_account_id: updatedSettings.business_account_id,
+            verify_token: updatedSettings.verify_token,
+            created_at: updatedSettings.created_at,
+            updated_at: updatedSettings.updated_at,
+          }
+        : null,
     });
 
   } catch (error) {

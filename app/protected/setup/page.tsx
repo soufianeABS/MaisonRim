@@ -13,8 +13,6 @@ interface UserSettings {
   access_token_added: boolean;
   webhook_verified: boolean;
   api_version: string;
-  phone_number: string | null;
-  full_name: string | null;
   has_access_token: boolean;
   has_phone_number_id: boolean;
   has_business_account_id: boolean;

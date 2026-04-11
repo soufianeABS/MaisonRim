@@ -44,10 +44,7 @@ export async function POST(request: NextRequest) {
     // Update the user's custom name
     const { data: updatedUser, error: updateError } = await supabase
       .from('users')
-      .update({ 
-        custom_name: customName,
-        updated_at: new Date().toISOString()
-      })
+      .update({ custom_name: customName })
       .eq('id', userId)
       .select()
       .single();
@@ -75,7 +72,7 @@ export async function POST(request: NextRequest) {
         id: updatedUser.id,
         name: updatedUser.name,
         custom_name: updatedUser.custom_name,
-        whatsapp_name: updatedUser.name,
+        whatsapp_name: updatedUser.whatsapp_name,
         last_active: updatedUser.last_active
       },
       timestamp: new Date().toISOString()
