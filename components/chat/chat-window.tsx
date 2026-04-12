@@ -3,7 +3,7 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users } from "lucide-react";
+import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
 import { MediaUpload } from "./media-upload";
@@ -128,6 +128,7 @@ export function ChatWindow({
   const [sendingMedia, setSendingMedia] = useState(false);
   const [showUserInfo, setShowUserInfo] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [suggestingReply, setSuggestingReply] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const unreadIndicatorRef = useRef<HTMLDivElement>(null);
@@ -266,6 +267,46 @@ export function ChatWindow({
     if (messageInput.trim() && (selectedUser || broadcastGroupName) && !isLoading) {
       onSendMessage(messageInput.trim());
       setMessageInput("");
+    }
+  };
+
+  const handleSuggestReply = async () => {
+    if (!selectedUser || broadcastGroupName || suggestingReply) return;
+
+    const recent = messages
+      .filter((m) => !m.id.startsWith("optimistic_"))
+      .slice(-10);
+    if (recent.length === 0) {
+      alert("No messages in this conversation yet.");
+      return;
+    }
+
+    setSuggestingReply(true);
+    try {
+      const response = await fetch("/api/ai/suggest-reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: recent.map((m) => ({
+            content: m.content,
+            is_sent_by_me: m.is_sent_by_me,
+          })),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to get suggestion");
+      }
+      const suggestion = String(result.suggestion ?? "").trim();
+      if (!suggestion) {
+        throw new Error("Empty suggestion");
+      }
+      setMessageInput(suggestion.slice(0, 1000));
+    } catch (err) {
+      console.error("Suggest reply:", err);
+      alert(err instanceof Error ? err.message : "Could not get a suggested reply.");
+    } finally {
+      setSuggestingReply(false);
     }
   };
 
@@ -1082,6 +1123,37 @@ export function ChatWindow({
           </button>
         )}
       </div>
+
+      {selectedUser && !broadcastGroupName && (
+        <div className="px-4 py-2 border-b border-border bg-muted/30 flex justify-end shrink-0">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2 text-xs sm:text-sm"
+            onClick={handleSuggestReply}
+            disabled={
+              suggestingReply ||
+              isLoading ||
+              sendingMedia ||
+              messages.filter((m) => !m.id.startsWith("optimistic_")).length === 0
+            }
+            title="Use AI to draft a reply from the last 10 messages"
+          >
+            {suggestingReply ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Suggesting…
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4 text-amber-500" />
+                Suggest reply
+              </>
+            )}
+          </Button>
+        </div>
+      )}
 
       {/* Messages Area */}
       <div 
