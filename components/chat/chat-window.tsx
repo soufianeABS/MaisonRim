@@ -6,6 +6,15 @@ import { Input } from "@/components/ui/input";
 import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { MediaUpload } from "./media-upload";
 import { UserInfoDialog } from "./user-info-dialog";
 import { TemplateSelector } from "./template-selector";
@@ -128,6 +137,8 @@ export function ChatWindow({
   const [sendingMedia, setSendingMedia] = useState(false);
   const [showUserInfo, setShowUserInfo] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [replyAgents, setReplyAgents] = useState<{ id: string; name: string }[]>([]);
+  const [replyAgentsLoading, setReplyAgentsLoading] = useState(false);
   const [suggestingReply, setSuggestingReply] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -270,7 +281,27 @@ export function ChatWindow({
     }
   };
 
-  const handleSuggestReply = async () => {
+  const loadReplyAgents = useCallback(async () => {
+    setReplyAgentsLoading(true);
+    try {
+      const response = await fetch("/api/reply-agents");
+      const result = await response.json();
+      if (response.ok && Array.isArray(result.agents)) {
+        setReplyAgents(
+          result.agents.map((a: { id: string; name: string }) => ({
+            id: a.id,
+            name: a.name,
+          })),
+        );
+      }
+    } catch (e) {
+      console.error("Load reply agents:", e);
+    } finally {
+      setReplyAgentsLoading(false);
+    }
+  }, []);
+
+  const handleSuggestReply = async (agentId: string | null) => {
     if (!selectedUser || broadcastGroupName || suggestingReply) return;
 
     const recent = messages
@@ -291,6 +322,7 @@ export function ChatWindow({
             content: m.content,
             is_sent_by_me: m.is_sent_by_me,
           })),
+          ...(agentId ? { agentId } : {}),
         }),
       });
       const result = await response.json();
@@ -1126,32 +1158,80 @@ export function ChatWindow({
 
       {selectedUser && !broadcastGroupName && (
         <div className="px-4 py-2 border-b border-border bg-muted/30 flex justify-end shrink-0">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="gap-2 text-xs sm:text-sm"
-            onClick={handleSuggestReply}
-            disabled={
-              suggestingReply ||
-              isLoading ||
-              sendingMedia ||
-              messages.filter((m) => !m.id.startsWith("optimistic_")).length === 0
-            }
-            title="Use AI to draft a reply from the last 10 messages"
+          <DropdownMenu
+            onOpenChange={(open) => {
+              if (open) {
+                void loadReplyAgents();
+              }
+            }}
           >
-            {suggestingReply ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Suggesting…
-              </>
-            ) : (
-              <>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2 text-xs sm:text-sm"
+                disabled={
+                  suggestingReply ||
+                  isLoading ||
+                  sendingMedia ||
+                  messages.filter((m) => !m.id.startsWith("optimistic_")).length === 0
+                }
+                title="Choose an AI assistant and draft a reply from the last 10 messages"
+              >
+                {suggestingReply ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Suggesting…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4 text-amber-500" />
+                    Suggest reply
+                  </>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                {replyAgentsLoading ? "Loading assistants…" : "Choose an assistant"}
+              </DropdownMenuLabel>
+              <DropdownMenuItem
+                disabled={
+                  suggestingReply ||
+                  isLoading ||
+                  sendingMedia ||
+                  messages.filter((m) => !m.id.startsWith("optimistic_")).length === 0
+                }
+                onSelect={() => {
+                  void handleSuggestReply(null);
+                }}
+              >
                 <Sparkles className="h-4 w-4 text-amber-500" />
-                Suggest reply
-              </>
-            )}
-          </Button>
+                Default assistant
+              </DropdownMenuItem>
+              {replyAgents.map((a) => (
+                <DropdownMenuItem
+                  key={a.id}
+                  disabled={
+                    suggestingReply ||
+                    isLoading ||
+                    sendingMedia ||
+                    messages.filter((m) => !m.id.startsWith("optimistic_")).length === 0
+                  }
+                  onSelect={() => {
+                    void handleSuggestReply(a.id);
+                  }}
+                >
+                  {a.name}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/protected/reply-agents">Manage reply agents…</Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
 

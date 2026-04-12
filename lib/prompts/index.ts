@@ -3,3 +3,8 @@ export {
   buildSuggestReplyUserContent,
   type SuggestReplyTranscriptLine,
 } from "./suggest-reply";
+export {
+  buildReplyAgentSystemInstruction,
+  normalizeStringArray,
+  type ReplyAgentPromptFields,
+} from "./reply-agent";

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
   SUGGEST_REPLY_SYSTEM_INSTRUCTION,
+  buildReplyAgentSystemInstruction,
   buildSuggestReplyUserContent,
   type SuggestReplyTranscriptLine,
 } from "@/lib/prompts";
@@ -58,6 +59,53 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const agentId =
+      typeof body.agentId === "string" && body.agentId.length > 0 ? body.agentId : null;
+
+    let systemInstruction = SUGGEST_REPLY_SYSTEM_INSTRUCTION;
+    let temperature = 0.65;
+    let maxOutputTokens = 512;
+
+    if (agentId) {
+      const { data: agent, error: agentError } = await supabase
+        .from("reply_agents")
+        .select(
+          "persona, task, output_rules, business_rules, system_prompt, temperature, max_output_tokens",
+        )
+        .eq("id", agentId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (agentError) {
+        console.error("suggest-reply agent load:", agentError);
+        return NextResponse.json(
+          { error: "Could not load the selected agent." },
+          { status: 500 },
+        );
+      }
+      const composed = agent
+        ? buildReplyAgentSystemInstruction({
+            persona: agent.persona,
+            task: agent.task,
+            output_rules: agent.output_rules,
+            business_rules: agent.business_rules,
+            system_prompt: agent.system_prompt,
+          })
+        : null;
+      if (!composed?.trim()) {
+        return NextResponse.json({ error: "Agent not found or incomplete." }, { status: 404 });
+      }
+      systemInstruction = composed.trim();
+      const t = Number(agent.temperature);
+      const mx = Number(agent.max_output_tokens);
+      if (Number.isFinite(t)) {
+        temperature = Math.min(2, Math.max(0, t));
+      }
+      if (Number.isFinite(mx)) {
+        maxOutputTokens = Math.min(8192, Math.max(64, Math.round(mx)));
+      }
+    }
+
     const transcript = normalizeTranscript(rawMessages.slice(-10));
     const userContent = buildSuggestReplyUserContent(transcript);
     const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
@@ -69,7 +117,7 @@ export async function POST(request: NextRequest) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         systemInstruction: {
-          parts: [{ text: SUGGEST_REPLY_SYSTEM_INSTRUCTION }],
+          parts: [{ text: systemInstruction }],
         },
         contents: [
           {
@@ -78,8 +126,8 @@ export async function POST(request: NextRequest) {
           },
         ],
         generationConfig: {
-          maxOutputTokens: 512,
-          temperature: 0.65,
+          maxOutputTokens,
+          temperature,
         },
       }),
     });
