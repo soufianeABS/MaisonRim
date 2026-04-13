@@ -799,7 +799,17 @@ LEFT JOIN latest_messages lm ON u.id = lm.sender_id OR u.id = lm.receiver_id
 ORDER BY has_unread DESC, last_message_time DESC NULLS LAST;
 ```
 
-#### 1.3 Enable Real-time Replication
+#### 1.3 Conversation tenant isolation (required)
+
+The `users` and `messages` policies in the script above are permissive (any signed-in user could read all rows). **Run [`sql/tenant_isolation.sql`](./sql/tenant_isolation.sql) in the Supabase SQL Editor** after the main migration (new query tab is fine). That script:
+
+- Replaces those policies so each account only sees rows where they are `sender_id` or `receiver_id` (your Supabase user id is `auth.uid()::text` in those columns).
+- Tightens the RPCs `mark_messages_as_read`, `get_unread_conversations`, `update_user_custom_name`, and `get_conversation_messages`.
+- Adds `public.is_conversation_admin()` for a future admin UI. Set **`app_metadata.role`** to **`"admin"`** on a user in the Dashboard (Authentication → Users → user → **App metadata**, merge with existing JSON: `{"role":"admin"}`). Admins can read all conversations via RLS; normal users cannot.
+
+Re-run `sql/tenant_isolation.sql` safely: it drops both legacy and tenant policies by name before recreating them.
+
+#### 1.4 Enable Real-time Replication
 
 1. Go to **Database** → **Replication** in Supabase dashboard
 2. Enable replication for: `users`, `messages`, `chat_groups`, `group_members`
