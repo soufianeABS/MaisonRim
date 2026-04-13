@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
   agentSelectColumns,
+  buildReplyAgentInsertRow,
   clampMaxTokens,
   clampTemperature,
   parseRulesInput,
@@ -78,26 +79,20 @@ export async function POST(request: NextRequest) {
     const temperature = clampTemperature(body.temperature);
     const max_output_tokens = clampMaxTokens(body.max_output_tokens);
 
-    const legacyOnly =
-      system_prompt.length > 0 &&
-      !persona &&
-      !task &&
-      output_rules.length === 0 &&
-      business_rules.length === 0;
-
     const { data, error } = await supabase
       .from("reply_agents")
-      .insert({
-        user_id: user.id,
-        name,
-        persona: legacyOnly ? "" : persona,
-        task: legacyOnly ? "" : task,
-        output_rules: legacyOnly ? [] : output_rules,
-        business_rules: legacyOnly ? [] : business_rules,
-        system_prompt: system_prompt || null,
-        temperature,
-        max_output_tokens,
-      })
+      .insert(
+        buildReplyAgentInsertRow(user.id, {
+          name,
+          persona,
+          task,
+          output_rules,
+          business_rules,
+          system_prompt,
+          temperature,
+          max_output_tokens,
+        }),
+      )
       .select(agentSelectColumns)
       .single();
 

@@ -1,8 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Download,
+  Loader2,
+  Pencil,
+  Plus,
+  Sparkles,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -112,6 +122,7 @@ export default function ReplyAgentsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [showForm, setShowForm] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const loadAgents = useCallback(async () => {
     setLoading(true);
@@ -207,6 +218,69 @@ export default function ReplyAgentsPage() {
     }
   };
 
+  const handleExport = async (id: string) => {
+    try {
+      const res = await fetch(`/api/reply-agents/${id}/export`);
+      const blob = await res.blob();
+      if (!res.ok) {
+        let msg = "Export failed";
+        try {
+          const j = JSON.parse(await blob.text());
+          if (j?.error) msg = j.error;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg);
+      }
+      const disp = res.headers.get("Content-Disposition");
+      let filename = "reply-agent.json";
+      if (disp) {
+        const star = /filename\*=UTF-8''([^;\s]+)/i.exec(disp);
+        const quoted = /filename="([^"]+)"/i.exec(disp);
+        if (star?.[1]) {
+          filename = decodeURIComponent(star[1].replace(/\+/g, " "));
+        } else if (quoted?.[1]) {
+          filename = quoted[1];
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Export failed");
+    }
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      let json: unknown;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw new Error("File is not valid JSON.");
+      }
+      const res = await fetch("/api/reply-agents/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(json),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Import failed");
+      }
+      await loadAgents();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Import failed");
+    }
+  };
+
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this reply agent?")) return;
     try {
@@ -278,12 +352,30 @@ export default function ReplyAgentsPage() {
             In chat, open <span className="font-medium text-foreground">Suggest reply</span> and
             pick an agent. Persona and task are required; rules are optional lists.
           </p>
-          {!showForm && (
-            <Button type="button" onClick={startCreate} className="shrink-0 gap-2">
-              <Plus className="h-4 w-4" />
-              New agent
+          <div className="flex gap-2 shrink-0 flex-wrap justify-end">
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={handleImportFile}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              onClick={() => importInputRef.current?.click()}
+            >
+              <Upload className="h-4 w-4" />
+              Import JSON
             </Button>
-          )}
+            {!showForm && (
+              <Button type="button" onClick={startCreate} className="gap-2">
+                <Plus className="h-4 w-4" />
+                New agent
+              </Button>
+            )}
+          </div>
         </div>
 
         {showForm && (
@@ -433,6 +525,15 @@ export default function ReplyAgentsPage() {
                     <div className="flex items-start justify-between gap-2">
                       <CardTitle className="text-base">{a.name}</CardTitle>
                       <div className="flex gap-1 shrink-0">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          title="Export JSON"
+                          onClick={() => handleExport(a.id)}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
                         <Button
                           type="button"
                           variant="ghost"

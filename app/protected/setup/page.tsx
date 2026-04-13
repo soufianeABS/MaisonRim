@@ -51,6 +51,8 @@ export default function SetupPage() {
   
   // Show/hide states
   const [showAccessToken, setShowAccessToken] = useState(false);
+
+  const [duplicatePhoneModalOpen, setDuplicatePhoneModalOpen] = useState(false);
   
   // Get user and settings on mount
   useEffect(() => {
@@ -125,11 +127,20 @@ export default function SetupPage() {
       });
       
       const data = await response.json();
-      
+
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to save access token');
+        if (
+          response.status === 409 &&
+          data.error === 'DUPLICATE_PHONE_NUMBER_ID'
+        ) {
+          setDuplicatePhoneModalOpen(true);
+          return;
+        }
+        throw new Error(
+          data.message || data.error || 'Failed to save access token',
+        );
       }
-      
+
       setAccessTokenSuccess(true);
       
       // Reload settings to get updated values
@@ -224,6 +235,46 @@ export default function SetupPage() {
   
   return (
     <div className="h-full overflow-y-auto bg-gradient-to-br from-background via-background to-muted/20">
+      {duplicatePhoneModalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="duplicate-phone-title"
+          onClick={() => setDuplicatePhoneModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border bg-background p-6 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start gap-3">
+              <AlertCircle className="h-6 w-6 shrink-0 text-amber-600" />
+              <div>
+                <h2
+                  id="duplicate-phone-title"
+                  className="text-lg font-semibold"
+                >
+                  Phone Number ID already in use
+                </h2>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  This Phone Number ID is already linked to another WaChat account.
+                  Each Meta phone number can only be linked to one account. Use a
+                  different account or the Phone Number ID that belongs to this Meta
+                  app only.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                onClick={() => setDuplicatePhoneModalOpen(false)}
+              >
+                OK
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="container max-w-6xl mx-auto py-8 px-4 pb-16">
         {/* Header */}
         <div className="mb-8">

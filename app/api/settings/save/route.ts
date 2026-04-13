@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 import { randomBytes } from 'crypto';
+
+const DUPLICATE_PHONE_NUMBER_ID = 'DUPLICATE_PHONE_NUMBER_ID';
 
 export const runtime = 'nodejs';
 
@@ -67,7 +69,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (phone_number_id !== undefined) {
-      updateData.phone_number_id = phone_number_id;
+      const trimmed =
+        typeof phone_number_id === 'string' ? phone_number_id.trim() : '';
+      updateData.phone_number_id = trimmed || null;
     }
 
     if (business_account_id !== undefined) {
@@ -80,6 +84,39 @@ export async function POST(request: NextRequest) {
 
     if (verify_token !== undefined) {
       updateData.verify_token = verify_token;
+    }
+
+    const newPhoneId = updateData.phone_number_id;
+    if (
+      newPhoneId !== undefined &&
+      newPhoneId !== null &&
+      String(newPhoneId).length > 0
+    ) {
+      try {
+        const admin = createServiceRoleClient();
+        const { data: conflictRows, error: conflictError } = await admin
+          .from('user_settings')
+          .select('id')
+          .eq('phone_number_id', String(newPhoneId))
+          .neq('id', user.id)
+          .limit(1);
+
+        if (!conflictError && conflictRows && conflictRows.length > 0) {
+          return NextResponse.json(
+            {
+              error: DUPLICATE_PHONE_NUMBER_ID,
+              message:
+                'This Phone Number ID is already linked to another account. Use the number tied to your Meta app or a different WaChat account.',
+            },
+            { status: 409 },
+          );
+        }
+      } catch (e) {
+        console.error(
+          'Duplicate phone_number_id check failed (service role?):',
+          e,
+        );
+      }
     }
 
     console.log('Updating user settings for user:', user.id);
@@ -126,6 +163,19 @@ export async function POST(request: NextRequest) {
 
     if (dbError) {
       console.error('Database error:', dbError);
+      if (dbError.code === '23505') {
+        const msg = String(dbError.message ?? '');
+        if (msg.includes('phone_number_id') || msg.includes('idx_user_settings_phone_number_id')) {
+          return NextResponse.json(
+            {
+              error: DUPLICATE_PHONE_NUMBER_ID,
+              message:
+                'This Phone Number ID is already linked to another account. Use the number tied to your Meta app or a different WaChat account.',
+            },
+            { status: 409 },
+          );
+        }
+      }
       return NextResponse.json(
         { error: 'Failed to save settings', details: dbError.message },
         { status: 500 }

@@ -654,15 +654,15 @@ BEGIN
     cg.id AS group_id,
     cg.name AS group_name,
     cg.description AS group_description,
-    COUNT(DISTINCT gm.id) AS member_count,
+    COUNT(DISTINCT gm.id)::bigint AS member_count,
     COALESCE(SUM(
-      (SELECT COUNT(*) 
+      (SELECT COUNT(*)::bigint
        FROM messages m 
        WHERE m.sender_id = gm.user_id 
-       AND m.receiver_id = auth.uid()::text
+       AND m.receiver_id = (SELECT auth.uid()::text)
        AND m.is_read = false
       )
-    ), 0) AS unread_count,
+    ), 0)::bigint AS unread_count,
     cg.created_at,
     cg.updated_at
   FROM chat_groups cg

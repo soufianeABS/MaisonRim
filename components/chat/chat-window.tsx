@@ -3,7 +3,10 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -113,6 +116,8 @@ interface ChatWindowProps {
   isLoading?: boolean;
   onUpdateName?: (userId: string, customName: string) => Promise<void>;
   broadcastGroupName?: string | null;
+  /** Called after a message row is removed (e.g. localhost test delete) so parent state updates even if Realtime lags */
+  onMessageDeleted?: (messageId: string) => void;
 }
 
 export function ChatWindow({ 
@@ -124,7 +129,8 @@ export function ChatWindow({
   isMobile = false,
   isLoading = false,
   onUpdateName,
-  broadcastGroupName
+  broadcastGroupName,
+  onMessageDeleted,
 }: ChatWindowProps) {
   const [messageInput, setMessageInput] = useState("");
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
@@ -140,10 +146,162 @@ export function ChatWindow({
   const [replyAgents, setReplyAgents] = useState<{ id: string; name: string }[]>([]);
   const [replyAgentsLoading, setReplyAgentsLoading] = useState(false);
   const [suggestingReply, setSuggestingReply] = useState(false);
+  const [isLocalhostDev, setIsLocalhostDev] = useState(false);
+  const [devInsertLoading, setDevInsertLoading] = useState(false);
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
+
+  const [devComposeOpen, setDevComposeOpen] = useState(false);
+  const [devComposeKind, setDevComposeKind] = useState<"in" | "out" | "both" | null>(
+    null,
+  );
+  const [devTextInbound, setDevTextInbound] = useState("");
+  const [devTextOutbound, setDevTextOutbound] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const unreadIndicatorRef = useRef<HTMLDivElement>(null);
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const h = window.location.hostname;
+    setIsLocalhostDev(
+      h === "localhost" || h === "127.0.0.1" || h === "::1",
+    );
+  }, []);
+
+  const insertDevTestMessages = async (
+    kind: "in" | "out" | "both",
+    texts?: { inbound?: string; outbound?: string },
+  ) => {
+    if (!selectedUser || broadcastGroupName) return;
+    setDevInsertLoading(true);
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+      if (authError || !user) {
+        alert("Not signed in.");
+        return;
+      }
+
+      const ts = new Date().toISOString();
+      const contactId = selectedUser.id;
+      const businessId = user.id;
+
+      const inboundContent =
+        texts?.inbound?.trim() || `[dev] Inbound test — ${ts}`;
+      const outboundContent =
+        texts?.outbound?.trim() || `[dev] Outbound test — ${ts}`;
+
+      await supabase.from("users").upsert(
+        {
+          id: businessId,
+          name: user.email ?? "Dev user",
+          last_active: ts,
+        },
+        { onConflict: "id" },
+      );
+
+      await supabase.from("users").upsert(
+        {
+          id: contactId,
+          name: selectedUser.name,
+          last_active: ts,
+        },
+        { onConflict: "id" },
+      );
+
+      const rows: Array<{
+        id: string;
+        sender_id: string;
+        receiver_id: string;
+        content: string;
+        timestamp: string;
+        is_sent_by_me: boolean;
+        is_read: boolean;
+        message_type: string;
+        media_data: null;
+      }> = [];
+
+      const base = Date.now();
+      if (kind === "in" || kind === "both") {
+        rows.push({
+          id: `dev_in_${base}_${Math.random().toString(36).slice(2, 9)}`,
+          sender_id: contactId,
+          receiver_id: businessId,
+          content: inboundContent,
+          timestamp: ts,
+          is_sent_by_me: false,
+          is_read: false,
+          message_type: "text",
+          media_data: null,
+        });
+      }
+      if (kind === "out" || kind === "both") {
+        rows.push({
+          id: `dev_out_${base + 1}_${Math.random().toString(36).slice(2, 9)}`,
+          sender_id: contactId,
+          receiver_id: businessId,
+          content: outboundContent,
+          timestamp: ts,
+          is_sent_by_me: true,
+          is_read: true,
+          message_type: "text",
+          media_data: null,
+        });
+      }
+
+      const { error } = await supabase.from("messages").insert(rows);
+      if (error) {
+        console.error("[dev] insert messages:", error);
+        alert(`Dev insert error: ${error.message}`);
+      }
+    } finally {
+      setDevInsertLoading(false);
+    }
+  };
+
+  const openDevCompose = (kind: "in" | "out" | "both") => {
+    setDevComposeKind(kind);
+    setDevTextInbound("");
+    setDevTextOutbound("");
+    setDevComposeOpen(true);
+  };
+
+  const submitDevCompose = async () => {
+    if (!devComposeKind) return;
+    await insertDevTestMessages(devComposeKind, {
+      inbound: devTextInbound,
+      outbound: devTextOutbound,
+    });
+    setDevComposeOpen(false);
+    setDevComposeKind(null);
+  };
+
+  const handleDeleteTestMessage = async (messageId: string) => {
+    if (!isLocalhostDev) return;
+    if (messageId.startsWith("optimistic_")) return;
+    if (!window.confirm("Delete this message? (localhost test mode)")) return;
+
+    setDeletingMessageId(messageId);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("messages")
+        .delete()
+        .eq("id", messageId);
+      if (error) {
+        console.error("[dev] delete message:", error);
+        alert(`Could not delete: ${error.message}`);
+      } else {
+        onMessageDeleted?.(messageId);
+      }
+    } finally {
+      setDeletingMessageId(null);
+    }
+  };
 
   // Handle template message sending
   const handleSendTemplate = async (templateName: string, templateData: WhatsAppTemplate, variables: {
@@ -1080,6 +1238,90 @@ export function ChatWindow({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {devComposeOpen && devComposeKind && isLocalhostDev && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dev-compose-title"
+          onClick={() => {
+            setDevComposeOpen(false);
+            setDevComposeKind(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border bg-background p-6 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="dev-compose-title"
+              className="text-lg font-semibold mb-1"
+            >
+              Test message (localhost)
+            </h2>
+            <p className="text-xs text-muted-foreground mb-4">
+              Leave empty to use the default dev placeholder. Your text is
+              inserted as-is.
+            </p>
+            {(devComposeKind === "in" || devComposeKind === "both") && (
+              <div className="space-y-2 mb-4">
+                <Label htmlFor="dev-inbound-text">
+                  {devComposeKind === "both" ? "Inbound" : "Message text"}
+                </Label>
+                <Textarea
+                  id="dev-inbound-text"
+                  value={devTextInbound}
+                  onChange={(e) => setDevTextInbound(e.target.value)}
+                  placeholder="Inbound message content…"
+                  rows={4}
+                  className="font-mono text-sm"
+                />
+              </div>
+            )}
+            {(devComposeKind === "out" || devComposeKind === "both") && (
+              <div className="space-y-2 mb-6">
+                <Label htmlFor="dev-outbound-text">
+                  {devComposeKind === "both" ? "Outbound" : "Message text"}
+                </Label>
+                <Textarea
+                  id="dev-outbound-text"
+                  value={devTextOutbound}
+                  onChange={(e) => setDevTextOutbound(e.target.value)}
+                  placeholder="Outbound message content…"
+                  rows={4}
+                  className="font-mono text-sm"
+                />
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setDevComposeOpen(false);
+                  setDevComposeKind(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void submitDevCompose()}
+                disabled={devInsertLoading}
+              >
+                {devInsertLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Inserting…
+                  </>
+                ) : (
+                  "Insert"
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Chat Header */}
       <div className="p-4 border-b border-border bg-muted/50 flex items-center gap-3">
         {isMobile && onBack && (
@@ -1143,6 +1385,46 @@ export function ChatWindow({
                 )}
               </p>
             </div>
+            {isLocalhostDev && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-8 shrink-0 gap-1 border-amber-500/50 px-2 text-xs text-amber-800 dark:text-amber-300"
+                    disabled={devInsertLoading}
+                    title="Insert test messages (localhost only)"
+                  >
+                    {devInsertLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <FlaskConical className="h-3.5 w-3.5" />
+                    )}
+                    Dev
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>Test (localhost)</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => openDevCompose("in")}
+                  >
+                    Inbound
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => openDevCompose("out")}
+                  >
+                    Outbound
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => openDevCompose("both")}
+                  >
+                    Both
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </>
         ) : null}
         {!isMobile && onClose && (
@@ -1313,7 +1595,25 @@ export function ChatWindow({
                           </div>
                         )}
                         
-                        <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                        <div
+                          className={`flex items-start gap-1 ${isOwn ? "justify-end" : "justify-start"}`}
+                        >
+                          {isLocalhostDev &&
+                            !message.id.startsWith("optimistic_") && (
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteTestMessage(message.id)}
+                                disabled={deletingMessageId === message.id}
+                                className="mt-1 shrink-0 rounded p-1.5 text-muted-foreground opacity-70 transition-opacity hover:bg-destructive/15 hover:text-destructive hover:opacity-100 disabled:opacity-40"
+                                title="Supprimer (mode test)"
+                              >
+                                {deletingMessageId === message.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </button>
+                            )}
                           {renderMessageContent(message, isOwn)}
                         </div>
                       </div>

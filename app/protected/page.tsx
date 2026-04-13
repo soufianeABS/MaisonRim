@@ -450,6 +450,16 @@ export default function ChatPage() {
           );
         }
       })
+      .on('postgres_changes', {
+        event: 'DELETE',
+        schema: 'public',
+        table: 'messages',
+      }, (payload) => {
+        const oldRow = payload.old as { id?: string } | null;
+        const deletedId = oldRow?.id;
+        if (!deletedId) return;
+        setMessages((prev) => prev.filter((m) => m.id !== deletedId));
+      })
       .subscribe();
 
     console.log(`Subscribed to messages channel: ${channelName}`);
@@ -967,6 +977,9 @@ export default function ChatPage() {
               onSendMessage={handleSendMessage}
               isLoading={sendingMessage}
               onUpdateName={handleUpdateName}
+              onMessageDeleted={(id) =>
+                setMessages((prev) => prev.filter((m) => m.id !== id))
+              }
               onClose={() => {
                 setSelectedUser(null);
                 setMessages([]);
@@ -1001,6 +1014,9 @@ export default function ChatPage() {
                 selectedUser={selectedUser}
                 messages={messages}
                 onSendMessage={handleSendMessage}
+                onMessageDeleted={(id) =>
+                  setMessages((prev) => prev.filter((m) => m.id !== id))
+                }
                 onBack={() => {
                   handleBackToUsers();
                   setBroadcastGroupId(null);

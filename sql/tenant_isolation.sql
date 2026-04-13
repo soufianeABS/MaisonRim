@@ -51,6 +51,7 @@ DROP POLICY IF EXISTS "users_update_tenant_or_admin" ON public.users;
 DROP POLICY IF EXISTS "messages_select_tenant_or_admin" ON public.messages;
 DROP POLICY IF EXISTS "messages_insert_tenant_or_admin" ON public.messages;
 DROP POLICY IF EXISTS "messages_update_tenant_or_admin" ON public.messages;
+DROP POLICY IF EXISTS "messages_delete_tenant_or_admin" ON public.messages;
 
 DROP POLICY IF EXISTS "chat_groups_select_admin" ON public.chat_groups;
 DROP POLICY IF EXISTS "group_members_select_admin" ON public.group_members;
@@ -140,6 +141,15 @@ CREATE POLICY "messages_update_tenant_or_admin"
     OR receiver_id = (SELECT auth.uid()::text)
   )
   WITH CHECK (
+    public.is_conversation_admin()
+    OR sender_id = (SELECT auth.uid()::text)
+    OR receiver_id = (SELECT auth.uid()::text)
+  );
+
+CREATE POLICY "messages_delete_tenant_or_admin"
+  ON public.messages
+  FOR DELETE
+  USING (
     public.is_conversation_admin()
     OR sender_id = (SELECT auth.uid()::text)
     OR receiver_id = (SELECT auth.uid()::text)
@@ -293,3 +303,45 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 REVOKE ALL ON FUNCTION public.get_conversation_messages(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_conversation_messages(TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_conversation_messages(TEXT) TO service_role;
+
+-- -----------------------------------------------------------------------------
+-- Groups list RPC (fixes legacy DBs that used invalid auth.users() as a function)
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_user_groups_with_counts()
+RETURNS TABLE (
+  group_id UUID,
+  group_name TEXT,
+  group_description TEXT,
+  member_count BIGINT,
+  unread_count BIGINT,
+  created_at TIMESTAMP WITH TIME ZONE,
+  updated_at TIMESTAMP WITH TIME ZONE
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    cg.id AS group_id,
+    cg.name AS group_name,
+    cg.description AS group_description,
+    COUNT(DISTINCT gm.id)::bigint AS member_count,
+    COALESCE(SUM(
+      (SELECT COUNT(*)::bigint
+       FROM public.messages m
+       WHERE m.sender_id = gm.user_id
+         AND m.receiver_id = (SELECT auth.uid()::text)
+         AND m.is_read = false
+      )
+    ), 0)::bigint AS unread_count,
+    cg.created_at,
+    cg.updated_at
+  FROM public.chat_groups cg
+  LEFT JOIN public.group_members gm ON gm.group_id = cg.id
+  WHERE cg.owner_id = auth.uid()
+  GROUP BY cg.id, cg.name, cg.description, cg.created_at, cg.updated_at
+  ORDER BY cg.updated_at DESC;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+REVOKE ALL ON FUNCTION public.get_user_groups_with_counts() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_user_groups_with_counts() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_user_groups_with_counts() TO service_role;

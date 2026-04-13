@@ -92,3 +92,130 @@ export function validateAgentPayload(input: {
 
 export const agentSelectColumns =
   "id, name, persona, task, output_rules, business_rules, system_prompt, temperature, max_output_tokens, created_at, updated_at";
+
+/** JSON file format for export/import */
+export const REPLY_AGENT_EXPORT_VERSION = 1;
+
+export type ReplyAgentExportFile = {
+  version: typeof REPLY_AGENT_EXPORT_VERSION;
+  exportedAt: string;
+  sourceApp: "WaChat";
+  agent: {
+    name: string;
+    persona: string;
+    task: string;
+    output_rules: string[];
+    business_rules: string[];
+    system_prompt: string;
+    temperature: number;
+    max_output_tokens: number;
+  };
+};
+
+/**
+ * Accepts full export wrapper `{ version, agent }` or a flat agent object.
+ */
+export function parseReplyAgentImportPayload(
+  input: unknown,
+): ReplyAgentExportFile["agent"] | { error: string } {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return { error: "Invalid JSON: expected an object." };
+  }
+  const root = input as Record<string, unknown>;
+  let inner: Record<string, unknown> | null = null;
+  if (
+    root.agent &&
+    typeof root.agent === "object" &&
+    !Array.isArray(root.agent)
+  ) {
+    inner = root.agent as Record<string, unknown>;
+  } else if (
+    typeof root.name === "string" ||
+    typeof root.persona === "string" ||
+    typeof root.task === "string" ||
+    typeof root.system_prompt === "string"
+  ) {
+    inner = root;
+  }
+  if (!inner) {
+    return {
+      error:
+        'Invalid format: use an export file or an object with an "agent" field, or agent fields at the root.',
+    };
+  }
+
+  const name = String(inner.name ?? "").trim();
+  const persona = String(inner.persona ?? "").trim();
+  const task = String(inner.task ?? "").trim();
+  const output_rules = parseRulesInput(inner.output_rules);
+  const business_rules = parseRulesInput(inner.business_rules);
+  const system_prompt = String(inner.system_prompt ?? "").trim();
+  const temperature = clampTemperature(inner.temperature);
+  const max_output_tokens = clampMaxTokens(inner.max_output_tokens);
+
+  const v = validateAgentPayload({
+    name,
+    persona,
+    task,
+    output_rules,
+    business_rules,
+    system_prompt,
+  });
+  if (v.error) {
+    return { error: v.error };
+  }
+
+  return {
+    name,
+    persona,
+    task,
+    output_rules,
+    business_rules,
+    system_prompt,
+    temperature,
+    max_output_tokens,
+  };
+}
+
+export function sanitizeAgentFilename(name: string): string {
+  const s = name
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return s || "reply-agent";
+}
+
+/** Row for `reply_agents` insert — matches POST /api/reply-agents legacy split. */
+export function buildReplyAgentInsertRow(
+  userId: string,
+  fields: ReplyAgentExportFile["agent"],
+) {
+  const {
+    name,
+    persona,
+    task,
+    output_rules,
+    business_rules,
+    system_prompt,
+    temperature,
+    max_output_tokens,
+  } = fields;
+  const legacyOnly =
+    system_prompt.trim().length > 0 &&
+    !persona &&
+    !task &&
+    output_rules.length === 0 &&
+    business_rules.length === 0;
+
+  return {
+    user_id: userId,
+    name,
+    persona: legacyOnly ? "" : persona,
+    task: legacyOnly ? "" : task,
+    output_rules: legacyOnly ? [] : output_rules,
+    business_rules: legacyOnly ? [] : business_rules,
+    system_prompt: system_prompt || null,
+    temperature,
+    max_output_tokens,
+  };
+}
