@@ -48,6 +48,10 @@ interface ChatUser {
   custom_name?: string;
   whatsapp_name?: string;
   last_active: string;
+  status_id?: string | null;
+  status_name?: string | null;
+  status_color?: string | null;
+  status_rule?: string | null;
 }
 
 interface Message {
@@ -115,6 +119,7 @@ interface ChatWindowProps {
   isMobile?: boolean;
   isLoading?: boolean;
   onUpdateName?: (userId: string, customName: string) => Promise<void>;
+  onUsersUpdate?: () => void;
   broadcastGroupName?: string | null;
   /** Called after a message row is removed (e.g. localhost test delete) so parent state updates even if Realtime lags */
   onMessageDeleted?: (messageId: string) => void;
@@ -129,6 +134,7 @@ export function ChatWindow({
   isMobile = false,
   isLoading = false,
   onUpdateName,
+  onUsersUpdate,
   broadcastGroupName,
   onMessageDeleted,
 }: ChatWindowProps) {
@@ -300,6 +306,78 @@ export function ChatWindow({
       }
     } finally {
       setDeletingMessageId(null);
+    }
+  };
+
+  const handleDeleteConversation = async () => {
+    if (!isLocalhostDev) return;
+    if (!selectedUser || broadcastGroupName) return;
+    if (
+      !window.confirm(
+        "Delete the whole conversation? (localhost test mode)\n\nThis will delete all messages with this contact AND remove the contact from your list.",
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+      if (authError || !user) {
+        alert("Not signed in.");
+        return;
+      }
+
+      const contactId = selectedUser.id;
+      const businessId = user.id;
+
+      // In this app, messages are stored with sender_id=contact and receiver_id=business
+      // for both directions (see dev insert + server webhook mapping).
+      const { error } = await supabase
+        .from("messages")
+        .delete()
+        .eq("sender_id", contactId)
+        .eq("receiver_id", businessId);
+
+      if (error) {
+        console.error("[dev] delete conversation:", error);
+        alert(`Could not delete conversation: ${error.message}`);
+        return;
+      }
+
+      // Also remove the contact row so it disappears from the conversation list.
+      // Never delete your own business row.
+      if (contactId !== businessId) {
+        const { error: userDeleteError } = await supabase
+          .from("contacts")
+          .delete()
+          .eq("owner_id", businessId)
+          .eq("phone", contactId);
+        if (userDeleteError) {
+          console.error("[dev] delete contact row:", userDeleteError);
+          alert(
+            `Messages deleted, but could not delete contact row: ${userDeleteError.message}`,
+          );
+        }
+      }
+
+      // Clear local UI immediately
+      onMessageDeleted?.("__clear_all__");
+      // Refresh list so last_message/unread updates
+      await onUsersUpdate?.();
+
+      // Close the conversation UI
+      if (isMobile && onBack) {
+        onBack();
+      } else if (!isMobile && onClose) {
+        onClose();
+      }
+    } catch (e) {
+      console.error("[dev] delete conversation unexpected:", e);
+      alert(e instanceof Error ? e.message : "Could not delete conversation.");
     }
   };
 
@@ -480,6 +558,7 @@ export function ChatWindow({
             content: m.content,
             is_sent_by_me: m.is_sent_by_me,
           })),
+          contactId: selectedUser.id,
           ...(agentId ? { agentId } : {}),
         }),
       });
@@ -1422,6 +1501,13 @@ export function ChatWindow({
                   >
                     Both
                   </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => void handleDeleteConversation()}
+                  >
+                    Delete conversation
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -1729,6 +1815,7 @@ export function ChatWindow({
           onClose={() => setShowUserInfo(false)}
           user={selectedUser}
           onUpdateName={handleUpdateName}
+          onUsersUpdate={onUsersUpdate}
         />
       )}
     </div>

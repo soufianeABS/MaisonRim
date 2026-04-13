@@ -186,19 +186,20 @@ export async function POST(request: NextRequest) {
       console.log('Message stored successfully in database:', insertedMessage?.id);
     }
 
-    // Update last_active for the sender (current user)
-    const { error: userUpdateError } = await supabase
-      .from('users')
-      .upsert([{
-        id: user.id,
-        name: user.user_metadata?.full_name || user.email || 'Unknown User',
-        last_active: timestamp
-      }], {
-        onConflict: 'id'
-      });
-
-    if (userUpdateError) {
-      console.error('Error updating user last_active:', userUpdateError);
+    // Ensure contact exists/updated in contacts (per owner)
+    try {
+      await supabase.from('contacts').upsert(
+        [
+          {
+            owner_id: user.id,
+            phone: cleanPhoneNumber,
+            last_active: timestamp,
+          },
+        ],
+        { onConflict: 'owner_id,phone' },
+      );
+    } catch (e) {
+      console.error('Error upserting contact (send-message):', e);
     }
 
     // Return success response

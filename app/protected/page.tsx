@@ -20,6 +20,10 @@ interface ChatUser {
   last_message?: string;
   last_message_type?: string;
   last_message_sender?: string;
+  status_id?: string | null;
+  status_name?: string | null;
+  status_color?: string | null;
+  status_rule?: string | null;
 }
 
 interface Message {
@@ -147,9 +151,9 @@ export default function ChatPage() {
     const fetchUsers = async () => {
       console.log('Fetching user conversations...');
       
-      // Use the updated user_conversations view with enhanced name handling
+      // Use owner-scoped contact_conversations view
       const { data, error } = await supabase
-        .from('user_conversations')
+        .from('contact_conversations')
         .select('*')
         .order('has_unread', { ascending: false })
         .order('last_message_time', { ascending: false });
@@ -173,7 +177,11 @@ export default function ChatPage() {
           last_message_time: user.last_message_time,
           last_message: user.last_message,
           last_message_type: user.last_message_type,
-          last_message_sender: user.last_message_sender
+          last_message_sender: user.last_message_sender,
+          status_id: user.status_id ?? null,
+          status_name: user.status_name ?? null,
+          status_color: user.status_color ?? null,
+          status_rule: user.status_rule ?? null,
         }));
 
         setUsers(transformedUsers);
@@ -621,7 +629,7 @@ export default function ChatPage() {
     console.log('Refreshing user conversations...');
     
     const { data, error } = await supabase
-      .from('user_conversations')
+      .from('contact_conversations')
       .select('*')
       .order('has_unread', { ascending: false })
       .order('last_message_time', { ascending: false });
@@ -642,7 +650,11 @@ export default function ChatPage() {
         last_message_time: user.last_message_time,
         last_message: user.last_message,
         last_message_type: user.last_message_type,
-        last_message_sender: user.last_message_sender
+        last_message_sender: user.last_message_sender,
+        status_id: user.status_id ?? null,
+        status_name: user.status_name ?? null,
+        status_color: user.status_color ?? null,
+        status_rule: user.status_rule ?? null,
       }));
 
       setUsers(transformedUsers);
@@ -971,14 +983,17 @@ export default function ChatPage() {
           
           {/* Chat Window - Desktop */}
           <div className="flex-1">
-            <ChatWindow
+              <ChatWindow
               selectedUser={selectedUser}
               messages={messages}
               onSendMessage={handleSendMessage}
               isLoading={sendingMessage}
               onUpdateName={handleUpdateName}
+              onUsersUpdate={refreshUsers}
               onMessageDeleted={(id) =>
-                setMessages((prev) => prev.filter((m) => m.id !== id))
+                id === "__clear_all__"
+                  ? setMessages([])
+                  : setMessages((prev) => prev.filter((m) => m.id !== id))
               }
               onClose={() => {
                 setSelectedUser(null);
@@ -1015,7 +1030,7 @@ export default function ChatPage() {
                 messages={messages}
                 onSendMessage={handleSendMessage}
                 onMessageDeleted={(id) =>
-                  setMessages((prev) => prev.filter((m) => m.id !== id))
+                  id === "__clear_all__" ? setMessages([]) : setMessages((prev) => prev.filter((m) => m.id !== id))
                 }
                 onBack={() => {
                   handleBackToUsers();
@@ -1025,6 +1040,7 @@ export default function ChatPage() {
                 isMobile={true}
                 isLoading={sendingMessage}
                 onUpdateName={handleUpdateName}
+                onUsersUpdate={refreshUsers}
                 broadcastGroupName={broadcastGroupName}
               />
       </div>

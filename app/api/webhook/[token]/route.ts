@@ -364,38 +364,21 @@ export async function POST(
         }
       }
 
-      // Check if user exists in our database
-      const { data: existingUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', phoneNumber)
-        .single();
-
-      // Create user if they don't exist
-      if (!existingUser) {
-        console.log(`Creating new user: ${contactName}`);
-        const { error: userError } = await supabase
-          .from('users')
-          .insert([{
-            id: phoneNumber,
-            name: contactName,
-            last_active: messageTimestamp
-          }]);
-
-        if (userError) {
-          console.error('Error creating user:', userError);
-          continue;
-        }
-      } else {
-        // Update last_active timestamp
-        const { error: updateError } = await supabase
-          .from('users')
-          .update({ last_active: messageTimestamp })
-          .eq('id', phoneNumber);
-
-        if (updateError) {
-          console.error('Error updating user last_active:', updateError);
-        }
+      // Upsert contact (per owner) so it appears in the inbox
+      try {
+        await supabase.from('contacts').upsert(
+          [
+            {
+              owner_id: businessOwnerId,
+              phone: phoneNumber,
+              whatsapp_name: contactName || null,
+              last_active: messageTimestamp,
+            },
+          ],
+          { onConflict: 'owner_id,phone' },
+        );
+      } catch (e) {
+        console.error('Error upserting contact:', e);
       }
 
       // The receiver is the business owner

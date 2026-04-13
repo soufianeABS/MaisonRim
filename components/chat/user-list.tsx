@@ -4,7 +4,21 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ThemeSwitcher } from "@/components/theme-switcher";
-import { Search, MessageCircle, LogOut, Plus, Edit3, Check, X, Phone, FileText, Settings, Users, Sparkles } from "lucide-react";
+import {
+  Search,
+  MessageCircle,
+  LogOut,
+  Plus,
+  Edit3,
+  Check,
+  X,
+  Phone,
+  FileText,
+  Settings,
+  Users,
+  Sparkles,
+  Tag,
+} from "lucide-react";
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -23,6 +37,9 @@ interface ChatUser {
   last_message_type?: string;
   last_message_sender?: string;
   unread_count?: number;
+  status_id?: string | null;
+  status_name?: string | null;
+  status_color?: string | null;
 }
 
 interface Group {
@@ -78,7 +95,13 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
       const data = await response.json();
       
       if (data.success && data.groups) {
-        setGroups(data.groups);
+        // Defensive: ensure unique group ids (React keys must be unique)
+        const map = new Map<string, Group>();
+        for (const g of data.groups as Group[]) {
+          if (!g?.id) continue;
+          map.set(String(g.id), g);
+        }
+        setGroups(Array.from(map.values()));
       }
     } catch (error) {
       console.error('Error loading groups:', error);
@@ -260,10 +283,10 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
         const successCount = result.results.successCount;
         const failedCount = result.results.failedCount;
         
-        let message = `Successfully added ${successCount} user${successCount !== 1 ? 's' : ''}`;
+        let message = `Successfully added ${successCount} contact${successCount !== 1 ? 's' : ''}`;
         
         if (failedCount > 0) {
-          message += `\n\nFailed to add ${failedCount} user${failedCount !== 1 ? 's' : ''}:`;
+          message += `\n\nFailed to add ${failedCount} contact${failedCount !== 1 ? 's' : ''}:`;
           result.results.failed.forEach((failure: { phoneNumber: string; error: string }) => {
             message += `\n- ${failure.phoneNumber}: ${failure.error}`;
           });
@@ -437,6 +460,16 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                 <Sparkles className="h-5 w-5" />
               </Button>
             </Link>
+            <Link href="/protected/statuses">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
+                title="Statuses"
+              >
+                <Tag className="h-5 w-5" />
+              </Button>
+            </Link>
             <Link href="/protected/setup">
               <Button
                 variant="ghost"
@@ -461,12 +494,12 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
         </div>
       </div>
 
-      {/* New Chat Form - Bulk User Creation */}
+      {/* New Chat Form - Bulk Contact Creation */}
       {showNewChat && (
         <div className="p-4 border-b border-border bg-muted/50 max-h-[400px] overflow-y-auto">
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="font-medium">Add User{newUsers.length > 1 ? 's' : ''}</h3>
+              <h3 className="font-medium">Add Contact{newUsers.length > 1 ? 's' : ''}</h3>
               <Button
                 variant="ghost"
                 size="sm"
@@ -480,13 +513,13 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
               </Button>
             </div>
             
-            {/* User Inputs */}
+            {/* Contact Inputs */}
             <div className="space-y-3">
               {newUsers.map((user, index) => (
                 <div key={user.id} className="space-y-2 p-3 border border-border rounded-lg bg-background">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium text-muted-foreground">
-                      User {index + 1}
+                      Contact {index + 1}
                     </span>
                     {newUsers.length > 1 && (
                       <Button
@@ -495,7 +528,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                         onClick={() => handleRemoveUserInput(user.id)}
                         disabled={isCreatingChat}
                         className="p-1 h-6 w-6 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-                        title="Remove this user"
+                        title="Remove this contact"
                       >
                         <X className="h-3 w-3" />
                       </Button>
@@ -535,7 +568,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                 className="w-full border-dashed"
               >
                 <Plus className="h-4 w-4 mr-2" />
-                Add Another User
+                Add Another Contact
               </Button>
             )}
 
@@ -547,7 +580,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                 className="flex-1 bg-green-600 hover:bg-green-700 text-white"
                 size="sm"
               >
-                {isCreatingChat ? "Adding..." : `Add User${newUsers.filter(u => u.phoneNumber.trim()).length > 1 ? 's' : ''}`}
+                {isCreatingChat ? "Adding..." : `Add Contact${newUsers.filter(u => u.phoneNumber.trim()).length > 1 ? 's' : ''}`}
               </Button>
               <Button
                 variant="outline"
@@ -564,7 +597,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
             
             {/* Helper Text */}
             <p className="text-xs text-muted-foreground text-center">
-              {newUsers.filter(u => u.phoneNumber.trim()).length} user{newUsers.filter(u => u.phoneNumber.trim()).length !== 1 ? 's' : ''} to add
+              {newUsers.filter(u => u.phoneNumber.trim()).length} contact{newUsers.filter(u => u.phoneNumber.trim()).length !== 1 ? 's' : ''} to add
               {newUsers.length < 20 && ` • Max 20 at once`}
             </p>
           </div>
@@ -712,6 +745,18 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                       <span className="text-xs text-muted-foreground">
                         {formatTime(user.last_message_time || user.last_active)}
                       </span>
+                      {user.status_name && user.status_color ? (
+                        <span
+                          className="hidden sm:inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium text-foreground/90"
+                          title={`Status: ${user.status_name}`}
+                        >
+                          <span
+                            className="inline-block h-2 w-2 rounded-full"
+                            style={{ backgroundColor: String(user.status_color) }}
+                          />
+                          {user.status_name}
+                        </span>
+                      ) : null}
                       {(user.unread_count || 0) > 0 && (
                         <div className="bg-green-600 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-medium shadow-md animate-scale-in">
                           {user.unread_count! > 99 ? '99+' : user.unread_count}

@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       updated_at: string;
       access_token?: string;
       access_token_added?: boolean;
-      phone_number_id?: string;
+      phone_number_id?: string | null;
       business_account_id?: string;
       verify_token?: string;
       api_version?: string;

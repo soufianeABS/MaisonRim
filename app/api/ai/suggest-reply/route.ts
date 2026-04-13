@@ -61,6 +61,8 @@ export async function POST(request: NextRequest) {
 
     const agentId =
       typeof body.agentId === "string" && body.agentId.length > 0 ? body.agentId : null;
+    const contactId =
+      typeof body.contactId === "string" && body.contactId.length > 0 ? body.contactId : null;
 
     let systemInstruction = SUGGEST_REPLY_SYSTEM_INSTRUCTION;
     let temperature = 0.65;
@@ -104,6 +106,34 @@ export async function POST(request: NextRequest) {
       }
       if (Number.isFinite(mx)) {
         maxOutputTokens = Math.min(8192, Math.max(64, Math.round(mx)));
+      }
+    }
+
+    if (contactId) {
+      const { data: assignment, error: aErr } = await supabase
+        .from("contact_status_assignments")
+        .select("status_id")
+        .eq("owner_id", user.id)
+        .eq("contact_id", contactId)
+        .maybeSingle();
+
+      if (aErr) {
+        console.error("suggest-reply status assignment load:", aErr);
+      } else if (assignment?.status_id) {
+        const { data: status, error: sErr } = await supabase
+          .from("contact_statuses")
+          .select("name, rule")
+          .eq("id", assignment.status_id)
+          .eq("owner_id", user.id)
+          .maybeSingle();
+
+        if (sErr) {
+          console.error("suggest-reply status load:", sErr);
+        } else if (status?.rule && String(status.rule).trim().length > 0) {
+          const ruleText = String(status.rule).trim();
+          const name = String(status.name ?? "Status");
+          systemInstruction = `${systemInstruction}\n\n[Contact status: ${name}]\nRule:\n${ruleText}`.trim();
+        }
       }
     }
 

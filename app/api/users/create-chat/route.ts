@@ -92,45 +92,46 @@ async function handleSingleUserCreation(
 
   console.log(`Creating/getting chat with ${cleanPhoneNumber}, custom name: "${customName}"`);
 
-  // Call the database function to create or get user
-  const { data, error } = await supabase.rpc('create_or_get_user', {
-    phone_number: cleanPhoneNumber,
-    user_name: customName || null
-  });
+  const now = new Date().toISOString();
+  const { data: contact, error } = await supabase
+    .from('contacts')
+    .upsert(
+      [
+        {
+          owner_id: user.id,
+          phone: cleanPhoneNumber,
+          custom_name: customName?.trim() || null,
+          last_active: now,
+        },
+      ],
+      { onConflict: 'owner_id,phone' },
+    )
+    .select()
+    .single();
 
-  if (error) {
-    console.error('Error creating/getting user:', error);
+  if (error || !contact) {
+    console.error('Error creating/getting contact:', error);
     return new NextResponse(
-      JSON.stringify({ error: 'Failed to create chat', details: error.message }), 
+      JSON.stringify({ error: 'Failed to create chat', details: error?.message }), 
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
-
-  if (!data || data.length === 0) {
-    return new NextResponse(
-      JSON.stringify({ error: 'Failed to create or retrieve user' }), 
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
-  }
-
-  const userData = data[0];
-  console.log(`Successfully ${userData.is_new ? 'created' : 'retrieved'} user:`, userData);
 
   return NextResponse.json({
     success: true,
     user: {
-      id: userData.id,
-      name: userData.custom_name || userData.whatsapp_name || userData.name || userData.id,
-      custom_name: userData.custom_name,
-      whatsapp_name: userData.whatsapp_name,
-      last_active: userData.last_active,
+      id: contact.phone,
+      name: contact.custom_name || contact.whatsapp_name || contact.phone,
+      custom_name: contact.custom_name,
+      whatsapp_name: contact.whatsapp_name,
+      last_active: contact.last_active,
       unread_count: 0,
       last_message: '',
-      last_message_time: userData.last_active,
+      last_message_time: contact.last_active,
       last_message_type: 'text',
       last_message_sender: ''
     },
-    isNew: userData.is_new,
+    isNew: true,
     timestamp: new Date().toISOString()
   });
 }
@@ -221,50 +222,50 @@ async function handleBulkUserCreation(
         continue;
       }
 
-      // Call the database function to create or get user
-      const { data, error } = await supabase.rpc('create_or_get_user', {
-        phone_number: cleanPhoneNumber,
-        user_name: customName || null
-      });
+      const now = new Date().toISOString();
+      const { data: contact, error } = await supabase
+        .from('contacts')
+        .upsert(
+          [
+            {
+              owner_id: user.id,
+              phone: cleanPhoneNumber,
+              custom_name: customName?.trim() || null,
+              last_active: now,
+            },
+          ],
+          { onConflict: 'owner_id,phone' },
+        )
+        .select()
+        .single();
 
-      if (error) {
-        console.error(`Error creating user ${cleanPhoneNumber}:`, error);
+      if (error || !contact) {
+        console.error(`Error creating contact ${cleanPhoneNumber}:`, error);
         results.failed.push({
           phoneNumber,
           customName,
-          error: error.message || 'Database error'
+          error: error?.message || 'Database error'
         });
         results.failedCount++;
         continue;
       }
 
-      if (!data || data.length === 0) {
-        results.failed.push({
-          phoneNumber,
-          customName,
-          error: 'Failed to create or retrieve user'
-        });
-        results.failedCount++;
-        continue;
-      }
-
-      const userData = data[0];
       results.success.push({
         phoneNumber,
         customName,
         user: {
-          id: userData.id,
-          name: userData.custom_name || userData.whatsapp_name || userData.name || userData.id,
-          custom_name: userData.custom_name,
-          whatsapp_name: userData.whatsapp_name,
-          last_active: userData.last_active,
+          id: contact.phone,
+          name: contact.custom_name || contact.whatsapp_name || contact.phone,
+          custom_name: contact.custom_name,
+          whatsapp_name: contact.whatsapp_name,
+          last_active: contact.last_active,
           unread_count: 0,
           last_message: '',
-          last_message_time: userData.last_active,
+          last_message_time: contact.last_active,
           last_message_type: 'text',
           last_message_sender: ''
         },
-        isNew: userData.is_new
+        isNew: true
       });
       results.successCount++;
 

@@ -41,11 +41,12 @@ export async function POST(request: NextRequest) {
 
     console.log(`Updating custom name for user ${userId} to "${customName}"`);
 
-    // Update the user's custom name
+    // Update the contact's custom name (per owner)
     const { data: updatedUser, error: updateError } = await supabase
-      .from('users')
+      .from('contacts')
       .update({ custom_name: customName })
-      .eq('id', userId)
+      .eq('owner_id', user.id)
+      .eq('phone', userId)
       .select()
       .single();
 
@@ -69,8 +70,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       user: {
-        id: updatedUser.id,
-        name: updatedUser.name,
+        id: updatedUser.phone,
+        name: updatedUser.custom_name || updatedUser.whatsapp_name || updatedUser.phone,
         custom_name: updatedUser.custom_name,
         whatsapp_name: updatedUser.whatsapp_name,
         last_active: updatedUser.last_active

@@ -1,10 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { X, Edit3, Check, Phone, MessageCircle, Clock, User } from "lucide-react";
+import { X, Edit3, Check, Phone, MessageCircle, Clock, User, Tag } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Textarea } from "@/components/ui/textarea";
 
 interface ChatUser {
   id: string;
@@ -14,6 +23,10 @@ interface ChatUser {
   last_active: string;
   unread_count?: number;
   last_message_time?: string;
+  status_id?: string | null;
+  status_name?: string | null;
+  status_color?: string | null;
+  status_rule?: string | null;
 }
 
 interface UserInfoDialogProps {
@@ -21,18 +34,82 @@ interface UserInfoDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onUpdateName: (userId: string, customName: string) => Promise<void>;
+  onUsersUpdate?: () => void;
 }
 
-export function UserInfoDialog({ user, isOpen, onClose, onUpdateName }: UserInfoDialogProps) {
+type ContactStatus = {
+  id: string;
+  name: string;
+  color: string;
+  rule: string;
+};
+
+export function UserInfoDialog({
+  user,
+  isOpen,
+  onClose,
+  onUpdateName,
+  onUsersUpdate,
+}: UserInfoDialogProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editingName, setEditingName] = useState(user.custom_name || '');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [statuses, setStatuses] = useState<ContactStatus[]>([]);
+  const [statusesLoading, setStatusesLoading] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [localStatusName, setLocalStatusName] = useState<string | null>(
+    user.status_name ?? null,
+  );
+  const [localStatusColor, setLocalStatusColor] = useState<string | null>(
+    user.status_color ?? null,
+  );
+  const [localStatusRule, setLocalStatusRule] = useState<string | null>(
+    user.status_rule ?? null,
+  );
 
-  if (!isOpen) return null;
+  // Keep local status snapshot in sync when switching users
+  // (dialog is re-used by the parent)
+  useEffect(() => {
+    setEditingName(user.custom_name || "");
+    setLocalStatusName(user.status_name ?? null);
+    setLocalStatusColor(user.status_color ?? null);
+    setLocalStatusRule(user.status_rule ?? null);
+  }, [
+    user.custom_name,
+    user.status_name,
+    user.status_color,
+    user.status_rule,
+    user.id,
+  ]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    // lazy load statuses for the dropdown
+    const load = async () => {
+      setStatusesLoading(true);
+      try {
+        const res = await fetch("/api/contact-statuses");
+        const data = await res.json();
+        if (res.ok) {
+          setStatuses(data.statuses ?? []);
+        }
+      } finally {
+        setStatusesLoading(false);
+      }
+    };
+    void load();
+  }, [isOpen]);
 
   const getDisplayName = () => {
     return user.custom_name || user.whatsapp_name || user.id;
   };
+
+  const statusPreview =
+    localStatusName && localStatusColor
+      ? { name: localStatusName, color: localStatusColor }
+      : null;
+
+  if (!isOpen) return null;
 
   const formatLastActive = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -76,6 +153,33 @@ export function UserInfoDialog({ user, isOpen, onClose, onUpdateName }: UserInfo
       setEditingName(user.custom_name || '');
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  const setContactStatus = async (statusId: string | null) => {
+    if (statusSaving) return;
+    setStatusSaving(true);
+    try {
+      const res = await fetch(`/api/contacts/${encodeURIComponent(user.id)}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status_id: statusId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to set status");
+      }
+
+      const chosen = statuses.find((s) => s.id === statusId) ?? null;
+      setLocalStatusName(chosen?.name ?? null);
+      setLocalStatusColor(chosen?.color ?? null);
+      setLocalStatusRule(chosen?.rule ?? null);
+
+      await onUsersUpdate?.();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to set status");
+    } finally {
+      setStatusSaving(false);
     }
   };
 
@@ -184,6 +288,82 @@ export function UserInfoDialog({ user, isOpen, onClose, onUpdateName }: UserInfo
 
             {/* Information Cards */}
             <div className="space-y-4">
+              {/* Status */}
+              <div className="flex items-start gap-3 p-4 bg-muted/50 rounded-lg">
+                <Tag className="h-5 w-5 text-muted-foreground mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-muted-foreground">Status</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {statusPreview ? (
+                      <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: statusPreview.color }}
+                        />
+                        {statusPreview.name}
+                      </span>
+                    ) : (
+                      <span className="text-sm text-muted-foreground italic">None</span>
+                    )}
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={statusesLoading || statusSaving}
+                        >
+                          {statusSaving ? "Saving…" : "Change"}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-64">
+                        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                          {statusesLoading ? "Loading…" : "Choose a status"}
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onSelect={() => void setContactStatus(null)}
+                          disabled={statusSaving}
+                        >
+                          Clear status
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        {statuses.map((s) => (
+                          <DropdownMenuItem
+                            key={s.id}
+                            onSelect={() => void setContactStatus(s.id)}
+                            disabled={statusSaving}
+                          >
+                            <span
+                              className="inline-block h-2.5 w-2.5 rounded-full mr-2"
+                              style={{ backgroundColor: s.color }}
+                            />
+                            {s.name}
+                          </DropdownMenuItem>
+                        ))}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem asChild>
+                          <a href="/protected/statuses">Manage statuses…</a>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+
+                  {localStatusRule?.trim() ? (
+                    <div className="mt-3">
+                      <p className="text-xs font-medium text-muted-foreground">Rule</p>
+                      <Textarea
+                        value={localStatusRule}
+                        readOnly
+                        rows={3}
+                        className="mt-1 text-xs resize-y"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
               {/* Phone Number */}
               <div className="flex items-start gap-3 p-4 bg-muted/50 rounded-lg">
                 <Phone className="h-5 w-5 text-muted-foreground mt-0.5" />
