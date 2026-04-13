@@ -83,15 +83,16 @@ export async function POST(request: NextRequest) {
           { status: 500 },
         );
       }
-      const composed = agent
-        ? buildReplyAgentSystemInstruction({
-            persona: agent.persona,
-            task: agent.task,
-            output_rules: agent.output_rules,
-            business_rules: agent.business_rules,
-            system_prompt: agent.system_prompt,
-          })
-        : null;
+      if (!agent) {
+        return NextResponse.json({ error: "Agent not found." }, { status: 404 });
+      }
+      const composed = buildReplyAgentSystemInstruction({
+        persona: agent.persona,
+        task: agent.task,
+        output_rules: agent.output_rules,
+        business_rules: agent.business_rules,
+        system_prompt: agent.system_prompt,
+      });
       if (!composed?.trim()) {
         return NextResponse.json({ error: "Agent not found or incomplete." }, { status: 404 });
       }

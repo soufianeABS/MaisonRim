@@ -3,6 +3,7 @@ import { AuthButton } from "@/components/auth-button";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { GitHubStarButton } from "@/components/github-star-button";
 import { hasEnvVars } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { 
   MessageCircle, 
@@ -35,7 +36,13 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export default function Home() {
+export default async function Home() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const getStartedHref = user ? "/protected" : "/auth/login";
+
   return (
     <main className="min-h-screen flex flex-col">
       {/* Navigation */}
@@ -80,7 +87,7 @@ export default function Home() {
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
               <Link 
-                href="/auth/login"
+                href={getStartedHref}
                 className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-8 py-4 rounded-full font-semibold text-lg transition-colors shadow-lg shadow-green-600/30"
               >
                 Get Started
@@ -721,7 +728,7 @@ export default function Home() {
                 <li><a href="#features" className="hover:text-foreground transition-colors">Features</a></li>
                 <li><a href="#tech-stack" className="hover:text-foreground transition-colors">Tech Stack</a></li>
                 <li><a href="#self-hosting" className="hover:text-foreground transition-colors">Self-Hosting</a></li>
-                <li><a href="/auth/login" className="hover:text-foreground transition-colors">Get Started</a></li>
+                <li><Link href={getStartedHref} className="hover:text-foreground transition-colors">Get Started</Link></li>
               </ul>
             </div>
             

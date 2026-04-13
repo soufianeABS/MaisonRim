@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { getPublicSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,11 +63,12 @@ export function SignUpForm({
     }
 
     try {
+      const origin = getPublicSiteUrl();
       const { error } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/protected/setup`,
+          emailRedirectTo: `${origin}/protected/setup`,
           data: {
             full_name: fullName,
             phone_number: phoneNumber,
