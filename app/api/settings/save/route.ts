@@ -33,15 +33,33 @@ export async function POST(request: NextRequest) {
     // Parse request body
     const body = await request.json();
     const {
+      messaging_provider,
+      provider_phone_number,
       access_token,
       phone_number_id,
       business_account_id,
       api_version,
       verify_token,
+      green_api_url,
+      green_media_url,
+      green_id_instance,
+      green_api_token_instance,
     } = body;
 
     // Validate that at least one field is being updated
-    if (!access_token && !phone_number_id && !business_account_id && !api_version && !verify_token) {
+    if (
+      messaging_provider === undefined &&
+      provider_phone_number === undefined &&
+      !access_token &&
+      !phone_number_id &&
+      !business_account_id &&
+      !api_version &&
+      !verify_token &&
+      green_api_url === undefined &&
+      green_media_url === undefined &&
+      green_id_instance === undefined &&
+      green_api_token_instance === undefined
+    ) {
       return NextResponse.json(
         { error: 'At least one setting must be provided' },
         { status: 400 }
@@ -51,6 +69,8 @@ export async function POST(request: NextRequest) {
     // Build the update object
     const updateData: {
       updated_at: string;
+      messaging_provider?: string;
+      provider_phone_number?: string | null;
       access_token?: string;
       access_token_added?: boolean;
       phone_number_id?: string | null;
@@ -59,9 +79,33 @@ export async function POST(request: NextRequest) {
       api_version?: string;
       webhook_verified?: boolean;
       webhook_token?: string;
+      green_api_url?: string | null;
+      green_media_url?: string | null;
+      green_id_instance?: string | null;
+      green_api_token_instance?: string | null;
     } = {
       updated_at: new Date().toISOString(),
     };
+
+    if (messaging_provider !== undefined) {
+      const provider =
+        typeof messaging_provider === 'string' ? messaging_provider.trim() : '';
+      if (provider && provider !== 'whatsapp_cloud' && provider !== 'green_api') {
+        return NextResponse.json(
+          { error: 'Invalid messaging_provider. Use whatsapp_cloud or green_api.' },
+          { status: 400 },
+        );
+      }
+      if (provider) updateData.messaging_provider = provider;
+    }
+
+    if (provider_phone_number !== undefined) {
+      const trimmed =
+        typeof provider_phone_number === 'string'
+          ? provider_phone_number.trim()
+          : '';
+      updateData.provider_phone_number = trimmed || null;
+    }
 
     if (access_token !== undefined) {
       updateData.access_token = access_token;
@@ -84,6 +128,32 @@ export async function POST(request: NextRequest) {
 
     if (verify_token !== undefined) {
       updateData.verify_token = verify_token;
+    }
+
+    if (green_api_url !== undefined) {
+      const trimmed =
+        typeof green_api_url === 'string' ? green_api_url.trim() : '';
+      updateData.green_api_url = trimmed || null;
+    }
+
+    if (green_media_url !== undefined) {
+      const trimmed =
+        typeof green_media_url === 'string' ? green_media_url.trim() : '';
+      updateData.green_media_url = trimmed || null;
+    }
+
+    if (green_id_instance !== undefined) {
+      const trimmed =
+        typeof green_id_instance === 'string' ? green_id_instance.trim() : '';
+      updateData.green_id_instance = trimmed || null;
+    }
+
+    if (green_api_token_instance !== undefined) {
+      const trimmed =
+        typeof green_api_token_instance === 'string'
+          ? green_api_token_instance.trim()
+          : '';
+      updateData.green_api_token_instance = trimmed || null;
     }
 
     const newPhoneId = updateData.phone_number_id;
@@ -188,6 +258,10 @@ export async function POST(request: NextRequest) {
       success: true,
       message: 'Settings saved successfully',
       settings: {
+        messaging_provider: (settings as { messaging_provider?: string | null })
+          .messaging_provider,
+        provider_phone_number: (settings as { provider_phone_number?: string | null })
+          .provider_phone_number,
         access_token_added: settings.access_token_added,
         webhook_verified: settings.webhook_verified,
         api_version: settings.api_version,
@@ -200,6 +274,13 @@ export async function POST(request: NextRequest) {
         phone_number_id: settings.phone_number_id,
         business_account_id: settings.business_account_id,
         verify_token: settings.verify_token,
+        green_api_url: (settings as { green_api_url?: string | null }).green_api_url,
+        green_media_url: (settings as { green_media_url?: string | null })
+          .green_media_url,
+        green_id_instance: (settings as { green_id_instance?: string | null })
+          .green_id_instance,
+        green_api_token_instance: (settings as { green_api_token_instance?: string | null })
+          .green_api_token_instance,
       },
     });
 
@@ -289,6 +370,11 @@ export async function GET() {
     return NextResponse.json({
       settings: updatedSettings
         ? {
+            messaging_provider:
+              (updatedSettings as { messaging_provider?: string | null })
+                .messaging_provider || 'whatsapp_cloud',
+            provider_phone_number: (updatedSettings as { provider_phone_number?: string | null })
+              .provider_phone_number,
             access_token_added: updatedSettings.access_token_added,
             webhook_verified: updatedSettings.webhook_verified,
             api_version: updatedSettings.api_version,
@@ -301,6 +387,14 @@ export async function GET() {
             phone_number_id: updatedSettings.phone_number_id,
             business_account_id: updatedSettings.business_account_id,
             verify_token: updatedSettings.verify_token,
+            green_api_url: (updatedSettings as { green_api_url?: string | null })
+              .green_api_url,
+            green_media_url: (updatedSettings as { green_media_url?: string | null })
+              .green_media_url,
+            green_id_instance: (updatedSettings as { green_id_instance?: string | null })
+              .green_id_instance,
+            green_api_token_instance: (updatedSettings as { green_api_token_instance?: string | null })
+              .green_api_token_instance,
             created_at: updatedSettings.created_at,
             updated_at: updatedSettings.updated_at,
           }

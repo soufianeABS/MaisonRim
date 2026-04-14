@@ -50,104 +50,169 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get user's WhatsApp API credentials
+    // Get user's messaging provider + credentials
     const { data: settings, error: settingsError } = await supabase
       .from('user_settings')
-      .select('access_token, phone_number_id, api_version, access_token_added')
+      .select(
+        'messaging_provider, access_token, phone_number_id, api_version, access_token_added, green_api_url, green_media_url, green_id_instance, green_api_token_instance',
+      )
       .eq('id', user.id)
       .single();
 
     if (settingsError || !settings) {
       console.error('User settings not found:', settingsError);
       return NextResponse.json(
-        { error: 'WhatsApp credentials not configured. Please complete setup.' },
+        { error: 'Messaging provider not configured. Please complete setup.' },
         { status: 400 }
       );
     }
 
-    if (!settings.access_token_added || !settings.access_token || !settings.phone_number_id) {
-      console.error('WhatsApp API credentials not configured for user:', user.id);
-      return NextResponse.json(
-        { error: 'WhatsApp Access Token not configured. Please complete setup.' },
-        { status: 400 }
-      );
-    }
+    const provider =
+      (settings as { messaging_provider?: string | null }).messaging_provider ||
+      'whatsapp_cloud';
 
-    const accessToken = settings.access_token;
-    const phoneNumberId = settings.phone_number_id;
-    const apiVersion = settings.api_version || 'v23.0';
+    let providerMessageId: string | null = null;
+    let providerRawResponse: unknown = null;
 
-    // Prepare WhatsApp API request
-    const whatsappApiUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
-    
-    const messageData = {
-      messaging_product: 'whatsapp',
-      to: cleanPhoneNumber, // Use cleaned phone number
-      type: 'text',
-      text: {
-        body: message
+    if (provider === 'green_api') {
+      const greenApiUrl = (settings as { green_api_url?: string | null }).green_api_url;
+      const idInstance = (settings as { green_id_instance?: string | null }).green_id_instance;
+      const apiTokenInstance = (settings as { green_api_token_instance?: string | null })
+        .green_api_token_instance;
+
+      if (!greenApiUrl || !idInstance || !apiTokenInstance) {
+        return NextResponse.json(
+          { error: 'Green API credentials not configured. Please complete setup.' },
+          { status: 400 },
+        );
       }
-    };
 
-    console.log('Sending message to WhatsApp API:', {
-      to: cleanPhoneNumber,
-      originalTo: to,
-      message: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
-      userId: user.id
-    });
+      const endpoint = `${greenApiUrl.replace(/\/+$/, '')}/waInstance${idInstance}/sendMessage/${apiTokenInstance}`;
+      const chatId = `${cleanPhoneNumber}@c.us`;
 
-    logWhatsAppGraphCall('send-message: POST /messages (text)', {
-      url: whatsappApiUrl,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      jsonBody: messageData,
-    });
+      const greenPayload = {
+        chatId,
+        message,
+        linkPreview: false,
+      };
 
-    // Send message via WhatsApp Cloud API using user-specific access token
-    const whatsappResponse = await fetch(whatsappApiUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(messageData),
-    });
+      console.log('Sending message via Green API:', {
+        chatId,
+        originalTo: to,
+        message: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
+        userId: user.id,
+      });
 
-    const responseData = await whatsappResponse.json();
+      const greenResp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(greenPayload),
+      });
 
-    console.log('WhatsApp response:', responseData);
+      const greenData = await greenResp.json().catch(async () => {
+        const txt = await greenResp.text().catch(() => '');
+        return { raw: txt };
+      });
 
-    if (!whatsappResponse.ok) {
-      console.error('WhatsApp API error:', responseData);
-      const metaErr = responseData?.error as
-        | { message?: string; code?: number; type?: string }
-        | undefined;
-      const metaMessage =
-        typeof metaErr?.message === 'string' ? metaErr.message : null;
-      const tokenExpired =
-        metaErr?.code === 190 ||
-        (metaMessage?.toLowerCase().includes('access token') ?? false);
-      const errorText = metaMessage
-        ? tokenExpired
-          ? `${metaMessage} Update your WhatsApp access token in Settings (Meta → Developers → your app → WhatsApp → API Setup).`
-          : metaMessage
-        : 'Failed to send message via WhatsApp API';
-      return NextResponse.json(
-        {
-          error: errorText,
-          details: responseData,
+      providerRawResponse = greenData;
+
+      if (!greenResp.ok) {
+        return NextResponse.json(
+          {
+            error: 'Failed to send message via Green API',
+            details: greenData,
+          },
+          { status: greenResp.status },
+        );
+      }
+
+      providerMessageId =
+        typeof (greenData as { idMessage?: unknown }).idMessage === 'string'
+          ? (greenData as { idMessage: string }).idMessage
+          : null;
+    } else {
+      if (!settings.access_token_added || !settings.access_token || !settings.phone_number_id) {
+        console.error('WhatsApp API credentials not configured for user:', user.id);
+        return NextResponse.json(
+          { error: 'WhatsApp Access Token not configured. Please complete setup.' },
+          { status: 400 }
+        );
+      }
+
+      const accessToken = settings.access_token;
+      const phoneNumberId = settings.phone_number_id;
+      const apiVersion = settings.api_version || 'v23.0';
+
+      const whatsappApiUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+
+      const messageData = {
+        messaging_product: 'whatsapp',
+        to: cleanPhoneNumber,
+        type: 'text',
+        text: { body: message },
+      };
+
+      console.log('Sending message to WhatsApp API:', {
+        to: cleanPhoneNumber,
+        originalTo: to,
+        message: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
+        userId: user.id,
+      });
+
+      logWhatsAppGraphCall('send-message: POST /messages (text)', {
+        url: whatsappApiUrl,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
         },
-        { status: whatsappResponse.status }
-      );
+        jsonBody: messageData,
+      });
+
+      const whatsappResponse = await fetch(whatsappApiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(messageData),
+      });
+
+      const responseData = await whatsappResponse.json();
+      providerRawResponse = responseData;
+
+      console.log('WhatsApp response:', responseData);
+
+      if (!whatsappResponse.ok) {
+        console.error('WhatsApp API error:', responseData);
+        const metaErr = responseData?.error as
+          | { message?: string; code?: number; type?: string }
+          | undefined;
+        const metaMessage =
+          typeof metaErr?.message === 'string' ? metaErr.message : null;
+        const tokenExpired =
+          metaErr?.code === 190 ||
+          (metaMessage?.toLowerCase().includes('access token') ?? false);
+        const errorText = metaMessage
+          ? tokenExpired
+            ? `${metaMessage} Update your WhatsApp access token in Settings (Meta → Developers → your app → WhatsApp → API Setup).`
+            : metaMessage
+          : 'Failed to send message via WhatsApp API';
+        return NextResponse.json(
+          {
+            error: errorText,
+            details: responseData,
+          },
+          { status: whatsappResponse.status }
+        );
+      }
+
+      providerMessageId = responseData.messages?.[0]?.id ?? null;
     }
 
-    // Get the message ID from WhatsApp response
-    const messageId = responseData.messages?.[0]?.id;
+    const messageId = providerMessageId;
     const timestamp = new Date().toISOString();
 
-    console.log('Message sent successfully via WhatsApp API:', messageId);
+    console.log('Message sent successfully:', { provider, messageId });
 
     // Prepare message object for database insertion
     // Note: sender_id is phone number (TEXT), receiver_id is auth user (UUID)
@@ -160,7 +225,7 @@ export async function POST(request: NextRequest) {
       is_sent_by_me: true,
       is_read: true, // Outgoing messages are already "read" by the sender
       message_type: 'text', // For now, we only send text messages
-      media_data: null // No media data for text messages
+      media_data: JSON.stringify({ provider }) // Track provider
     };
 
     console.log('Storing message in database:', {
@@ -207,7 +272,8 @@ export async function POST(request: NextRequest) {
       success: true,
       messageId: messageObject.id,
       timestamp: timestamp,
-      whatsappResponse: responseData,
+      provider,
+      providerResponse: providerRawResponse,
       storedInDb: !dbError
     });
 

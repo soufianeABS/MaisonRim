@@ -397,6 +397,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+> Optional (new): to enable **Green API** as an alternative WhatsApp provider, also run `sql/green_api_user_settings.sql`.
+
 -- ============================================
 -- INDEXES FOR PERFORMANCE
 -- ============================================

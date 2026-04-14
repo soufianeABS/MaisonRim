@@ -133,7 +133,18 @@ export default function ChatPage() {
         const response = await fetch('/api/settings/save');
         const data = await response.json();
         
-        const setupComplete = data.settings?.access_token_added || data.settings?.webhook_verified;
+        const provider = data.settings?.messaging_provider || 'whatsapp_cloud';
+        const hasCommonPhone = !!data.settings?.provider_phone_number;
+        const greenReady = !!(
+          data.settings?.green_api_url &&
+          data.settings?.green_id_instance &&
+          data.settings?.green_api_token_instance
+        );
+        const whatsappReady = !!(data.settings?.access_token_added || data.settings?.webhook_verified);
+        const setupComplete =
+          provider === 'green_api'
+            ? greenReady && hasCommonPhone
+            : whatsappReady && hasCommonPhone;
         setIsSetupComplete(setupComplete);
         setCheckingSetup(false);
       }
