@@ -54,6 +54,7 @@ export async function POST() {
       webhookUrl,
       webhookUrlToken: '',
       incomingWebhook: 'yes',
+      outgoingMessageWebhook: 'yes',
       outgoingWebhook: 'yes',
       outgoingAPIMessageWebhook: 'yes',
       stateWebhook: 'yes',

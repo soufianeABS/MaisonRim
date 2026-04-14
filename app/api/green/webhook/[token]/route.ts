@@ -90,7 +90,9 @@ export async function POST(
     }
     const body = (await request.json()) as GreenIncomingMessageWebhook;
 
-    if (body?.typeWebhook !== 'incomingMessageReceived') {
+    const isIncoming = body?.typeWebhook === 'incomingMessageReceived';
+    const isOutgoingFromPhone = body?.typeWebhook === 'outgoingMessageReceived';
+    if (!isIncoming && !isOutgoingFromPhone) {
       console.log('Green webhook: ignored type', { typeWebhook: body?.typeWebhook });
       return new NextResponse('OK', { status: 200 });
     }
@@ -171,8 +173,8 @@ export async function POST(
         receiver_id: businessOwnerId,
         content,
         timestamp: messageTimestamp,
-        is_sent_by_me: false,
-        is_read: false,
+        is_sent_by_me: isOutgoingFromPhone,
+        is_read: isOutgoingFromPhone, // outgoing messages are already "read" by the sender
         message_type: 'text',
         media_data: JSON.stringify({ provider: 'green_api', typeWebhook: body.typeWebhook }),
       },
