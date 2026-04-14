@@ -383,10 +383,10 @@ export default function ChatPage() {
         
         const newMessage = payload.new as MessagePayload;
         
-        // Check if this message belongs to the current conversation
-        const isRelevantMessage = 
-          (newMessage.sender_id === user.id && newMessage.receiver_id === selectedUser.id) ||
-          (newMessage.sender_id === selectedUser.id && newMessage.receiver_id === user.id);
+        // Messages are stored as: sender_id = contact phone, receiver_id = owner user id (both directions)
+        const isRelevantMessage =
+          newMessage.receiver_id === user.id &&
+          newMessage.sender_id === selectedUser.id;
         
         if (isRelevantMessage) {
           console.log('Adding message to conversation');
@@ -452,10 +452,10 @@ export default function ChatPage() {
         
         const updatedMessage = payload.new as MessagePayload;
         
-        // Check if this message belongs to the current conversation
-        const isRelevantMessage = 
-          (updatedMessage.sender_id === user.id && updatedMessage.receiver_id === selectedUser.id) ||
-          (updatedMessage.sender_id === selectedUser.id && updatedMessage.receiver_id === user.id);
+        // Messages are stored as: sender_id = contact phone, receiver_id = owner user id (both directions)
+        const isRelevantMessage =
+          updatedMessage.receiver_id === user.id &&
+          updatedMessage.sender_id === selectedUser.id;
         
         if (isRelevantMessage) {
           const messageWithFlag: Message = {

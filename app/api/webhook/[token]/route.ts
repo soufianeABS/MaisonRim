@@ -261,7 +261,7 @@ export async function POST(
     // Find user by webhook token
     const { data: userSettings, error: settingsError } = await supabase
       .from('user_settings')
-      .select('id, access_token, api_version, phone_number_id')
+      .select('id, access_token, api_version, phone_number_id, messaging_provider')
       .eq('webhook_token', webhookToken)
       .single();
 
@@ -287,6 +287,15 @@ export async function POST(
     const apiVersion = userSettings.api_version || 'v23.0';
 
     console.log('Found business owner:', businessOwnerId);
+
+    const provider = (userSettings as { messaging_provider?: string | null }).messaging_provider || 'whatsapp_cloud';
+    if (provider !== 'whatsapp_cloud') {
+      console.log('WhatsApp Cloud webhook ignored (provider not selected):', {
+        provider,
+        businessOwnerId,
+      });
+      return new NextResponse('OK', { status: 200 });
+    }
 
     // Extract message data from WhatsApp webhook payload
     const entry = body.entry?.[0];

@@ -64,7 +64,7 @@ export async function POST(
 
     const { data: userSettings, error: settingsError } = await supabase
       .from('user_settings')
-      .select('id')
+      .select('id, messaging_provider')
       .eq('webhook_token', token)
       .single();
 
@@ -78,6 +78,16 @@ export async function POST(
     }
 
     const businessOwnerId = userSettings.id as string;
+    const provider =
+      (userSettings as { messaging_provider?: string | null }).messaging_provider ||
+      'whatsapp_cloud';
+    if (provider !== 'green_api') {
+      console.log('Green webhook ignored (provider not selected):', {
+        provider,
+        businessOwnerId,
+      });
+      return new NextResponse('OK', { status: 200 });
+    }
     const body = (await request.json()) as GreenIncomingMessageWebhook;
 
     if (body?.typeWebhook !== 'incomingMessageReceived') {
