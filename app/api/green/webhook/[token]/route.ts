@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/server';
+import { uploadBufferToS3 } from '@/lib/r2-storage';
 
 export const runtime = 'nodejs';
 
@@ -21,6 +22,13 @@ type GreenIncomingMessageWebhook = {
     };
     extendedTextMessageData?: {
       text?: string;
+    };
+    fileMessageData?: {
+      downloadUrl?: string;
+      caption?: string;
+      fileName?: string;
+      jpegThumbnail?: string;
+      mimeType?: string;
     };
   };
 };
@@ -108,9 +116,24 @@ export async function POST(
     const messageTimestamp = new Date(ts * 1000).toISOString();
 
     const typeMessage = body.messageData?.typeMessage;
+    const fileData = body.messageData?.fileMessageData;
+
+    const messageTypeMap: Record<string, 'image' | 'video' | 'audio' | 'document' | 'text'> = {
+      textMessage: 'text',
+      extendedTextMessage: 'text',
+      imageMessage: 'image',
+      videoMessage: 'video',
+      audioMessage: 'audio',
+      documentMessage: 'document',
+    };
+
+    const mappedType = typeMessage ? messageTypeMap[typeMessage] : 'text';
+    const isMedia = mappedType !== 'text';
+
     const content =
       body.messageData?.textMessageData?.textMessage ??
       body.messageData?.extendedTextMessageData?.text ??
+      fileData?.caption ??
       (typeMessage ? `[${typeMessage}]` : '[Message]');
 
     const id =
@@ -165,6 +188,61 @@ export async function POST(
       // ignore
     }
 
+    // If it's a media message, download and upload to R2 so the UI can render it
+    let mediaUrl: string | null = null;
+    let s3Uploaded = false;
+    let mediaMimeType: string | null = null;
+    let mediaFilename: string | null = null;
+    let mediaCaption: string | null = null;
+
+    if (isMedia) {
+      mediaMimeType = fileData?.mimeType || null;
+      mediaFilename = fileData?.fileName || null;
+      mediaCaption = fileData?.caption || null;
+
+      const downloadUrl = fileData?.downloadUrl;
+      if (downloadUrl && mediaMimeType) {
+        try {
+          const resp = await fetch(downloadUrl);
+          if (resp.ok) {
+            const arr = await resp.arrayBuffer();
+            const buf = Buffer.from(arr);
+            // Keep a conservative limit to avoid huge memory usage
+            const maxBytes = 25 * 1024 * 1024;
+            if (buf.length <= maxBytes) {
+              const presigned = await uploadBufferToS3(
+                buf,
+                phoneNumber,
+                id,
+                mediaMimeType,
+                mediaFilename,
+              );
+              if (presigned) {
+                mediaUrl = presigned;
+                s3Uploaded = true;
+              }
+            } else {
+              console.warn('Green media too large to store in R2 (limit 25MB):', {
+                bytes: buf.length,
+                id,
+                phoneNumber,
+              });
+              mediaUrl = downloadUrl;
+            }
+          } else {
+            console.warn('Failed to download Green media:', resp.status, resp.statusText);
+            mediaUrl = downloadUrl;
+          }
+        } catch (e) {
+          console.warn('Error downloading/uploading Green media:', e);
+          mediaUrl = downloadUrl || null;
+        }
+      } else {
+        // No download url or mime type; keep placeholder
+        mediaUrl = downloadUrl || null;
+      }
+    }
+
     // Store message
     await supabase.from('messages').insert([
       {
@@ -175,8 +253,22 @@ export async function POST(
         timestamp: messageTimestamp,
         is_sent_by_me: isOutgoingFromPhone,
         is_read: isOutgoingFromPhone, // outgoing messages are already "read" by the sender
-        message_type: 'text',
-        media_data: JSON.stringify({ provider: 'green_api', typeWebhook: body.typeWebhook }),
+        message_type: mappedType,
+        media_data: JSON.stringify({
+          provider: 'green_api',
+          typeWebhook: body.typeWebhook,
+          ...(isMedia
+            ? {
+                type: mappedType,
+                mime_type: mediaMimeType,
+                filename: mediaFilename,
+                caption: mediaCaption,
+                media_url: mediaUrl,
+                s3_uploaded: s3Uploaded,
+                green_download_url: fileData?.downloadUrl || null,
+              }
+            : {}),
+        }),
       },
     ]);
 

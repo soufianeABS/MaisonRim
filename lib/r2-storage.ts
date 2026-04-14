@@ -262,6 +262,60 @@ export async function uploadFileToS3(
 }
 
 /**
+ * Upload a Buffer to R2 and return a presigned URL.
+ * Used for inbound media from providers that give a downloadUrl.
+ */
+export async function uploadBufferToS3(
+  buffer: Buffer,
+  senderId: string,
+  mediaId: string,
+  mimeType: string,
+  originalFilename?: string | null
+): Promise<string | null> {
+  try {
+    if (!buffer || buffer.length === 0) {
+      throw new Error('Buffer is empty');
+    }
+    if (!senderId || !mediaId || !mimeType) {
+      throw new Error('Missing required parameters for buffer upload');
+    }
+
+    const sanitizedSenderId = String(senderId).replace(/[^0-9]/g, '') || 'unknown';
+    const sanitizedMediaId = String(mediaId).replace(/[^a-zA-Z0-9_-]/g, '') || 'unknown';
+
+    // Keep same extension mapping for UI previews
+    const fileExtension = getFileExtensionFromMimeType(mimeType);
+    const s3Key = `${sanitizedSenderId}/${sanitizedMediaId}.${fileExtension}`;
+
+    console.log(`Uploading buffer to R2: ${s3Key} (${buffer.length} bytes)`);
+
+    const uploadCommand = new PutObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: s3Key,
+      Body: buffer,
+      ContentType: mimeType,
+      Metadata: {
+        'sender-id': sanitizedSenderId,
+        'media-id': sanitizedMediaId,
+        'upload-timestamp': new Date().toISOString(),
+        ...(originalFilename ? { 'original-filename': String(originalFilename) } : {}),
+        'file-size': buffer.length.toString(),
+        'content-type': mimeType,
+      },
+    });
+
+    await s3Client.send(uploadCommand);
+    console.log('R2 buffer upload successful');
+
+    // Reuse presign generator (it uses senderId/mediaId + mimeType to build the key)
+    return await generatePresignedUrl(sanitizedSenderId, sanitizedMediaId, mimeType);
+  } catch (error) {
+    console.error('Error in uploadBufferToS3 (R2):', error);
+    return null;
+  }
+}
+
+/**
  * Generate a presigned URL for accessing an object in R2
  */
 export async function generatePresignedUrl(
