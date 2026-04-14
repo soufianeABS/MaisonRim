@@ -218,45 +218,41 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get user's WhatsApp API credentials
+    // Get user's messaging provider + credentials
     const { data: settings, error: settingsError } = await supabase
       .from('user_settings')
-      .select('access_token, phone_number_id, api_version, access_token_added')
+      .select(
+        'messaging_provider, access_token, phone_number_id, api_version, access_token_added, green_api_url, green_media_url, green_id_instance, green_api_token_instance',
+      )
       .eq('id', user.id)
       .single();
 
     if (settingsError || !settings) {
       console.error('User settings not found:', settingsError);
       return NextResponse.json(
-        { error: 'WhatsApp credentials not configured. Please complete setup.' },
+        { error: 'Messaging provider not configured. Please complete setup.' },
         { status: 400 }
       );
     }
 
-    if (!settings.access_token_added || !settings.access_token || !settings.phone_number_id) {
-      console.error('WhatsApp API credentials not configured for user:', user.id);
-      return NextResponse.json(
-        { error: 'WhatsApp Access Token not configured. Please complete setup.' },
-        { status: 400 }
-      );
-    }
-
-    const accessToken = settings.access_token;
-    const phoneNumberId = settings.phone_number_id;
-    const apiVersion = settings.api_version || 'v23.0';
+    const provider =
+      (settings as { messaging_provider?: string | null }).messaging_provider ||
+      'whatsapp_cloud';
 
     // Validate file types before processing
-    const unsupportedFiles = files.filter(file => !isWhatsAppSupportedFileType(file.type));
-    if (unsupportedFiles.length > 0) {
-      console.error('Unsupported file types detected:', unsupportedFiles.map(f => ({ name: f.name, type: f.type })));
-      return new NextResponse(
-        JSON.stringify({ 
-          error: 'Unsupported file types', 
-          message: `WhatsApp does not support the following file types: ${unsupportedFiles.map(f => f.type).join(', ')}`,
-          unsupportedFiles: unsupportedFiles.map(f => ({ name: f.name, type: f.type }))
-        }), 
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
+    if (provider !== 'green_api') {
+      const unsupportedFiles = files.filter(file => !isWhatsAppSupportedFileType(file.type));
+      if (unsupportedFiles.length > 0) {
+        console.error('Unsupported file types detected:', unsupportedFiles.map(f => ({ name: f.name, type: f.type })));
+        return new NextResponse(
+          JSON.stringify({ 
+            error: 'Unsupported file types', 
+            message: `WhatsApp does not support the following file types: ${unsupportedFiles.map(f => f.type).join(', ')}`,
+            unsupportedFiles: unsupportedFiles.map(f => ({ name: f.name, type: f.type }))
+          }), 
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     const results = [];
@@ -270,73 +266,193 @@ export async function POST(request: NextRequest) {
       console.log(`Processing file ${i + 1}/${files.length}: ${file.name} (${file.type}, ${file.size} bytes)`);
 
       try {
-        // Upload media to WhatsApp using user-specific credentials
-        const mediaUpload = await uploadMediaToWhatsApp(file, accessToken, phoneNumberId, apiVersion);
-        if (!mediaUpload) {
-          throw new Error('Failed to upload media to WhatsApp');
-        }
+        if (provider === 'green_api') {
+          const greenApiUrl = (settings as { green_api_url?: string | null }).green_api_url;
+          const greenMediaUrl = (settings as { green_media_url?: string | null }).green_media_url || greenApiUrl;
+          const idInstance = (settings as { green_id_instance?: string | null }).green_id_instance;
+          const apiTokenInstance = (settings as { green_api_token_instance?: string | null })
+            .green_api_token_instance;
 
-        // Determine media type
-        const mediaType = getWhatsAppMediaType(file.type);
+          if (!greenApiUrl || !greenMediaUrl || !idInstance || !apiTokenInstance) {
+            throw new Error('Green API credentials not configured. Please complete setup.');
+          }
 
-        // Send media message using user-specific credentials
-        const messageResponse = await sendMediaMessage(
-          to, 
-          mediaUpload.id, 
-          mediaType, 
-          accessToken, 
-          phoneNumberId, 
-          apiVersion, 
-          caption
-        );
-        const messageId = messageResponse.messages?.[0]?.id;
+          // Green API file size limit is 100MB (per docs)
+          const maxBytes = 100 * 1024 * 1024;
+          if (file.size > maxBytes) {
+            throw new Error(`File too large for Green API (max 100MB): ${file.name}`);
+          }
 
-        console.log(`Media message sent successfully: ${messageId}`);
+          const cleanPhoneNumber = to.replace(/\s+/g, '').replace(/[^\d]/g, '');
+          const chatId = `${cleanPhoneNumber}@c.us`;
 
-        // Upload to S3 for our records
-        const mediaIdForS3 = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const s3Url = await uploadFileToS3(file, user.id, mediaIdForS3);
+          // 1) Upload binary to Green storage (returns stable urlFile, avoids signed-url issues)
+          const uploadEndpoint = `${greenMediaUrl.replace(/\/+$/, '')}/waInstance${idInstance}/uploadFile/${apiTokenInstance}`;
+          const arrayBuf = await file.arrayBuffer();
+          const uploadResp = await fetch(uploadEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': file.type || 'application/octet-stream',
+              ...(file.type ? {} : { 'GA-Filename': file.name }),
+            },
+            body: Buffer.from(arrayBuf),
+          });
+          const uploadData = await uploadResp.json().catch(async () => {
+            const txt = await uploadResp.text().catch(() => '');
+            return { raw: txt };
+          });
+          if (!uploadResp.ok || typeof (uploadData as { urlFile?: unknown }).urlFile !== 'string') {
+            throw new Error(`Green API uploadFile failed: ${JSON.stringify(uploadData)}`);
+          }
+          const urlFile = (uploadData as { urlFile: string }).urlFile;
 
-        // Store in database
-        const messageObject = {
-          id: messageId || `outgoing_media_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          sender_id: to, // Recipient phone number (sender in DB)
-          receiver_id: user.id, // Current authenticated user (receiver in DB)
-          content: caption || `[${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)}]`,
-          timestamp: timestamp,
-          is_sent_by_me: true,
-          is_read: true, // Outgoing messages are already "read" by the sender
-          message_type: mediaType,
-          media_data: JSON.stringify({
-            type: mediaType,
-            id: mediaIdForS3,
-            mime_type: file.type,
+          // 2) Send file by URL
+          const sendEndpoint = `${greenApiUrl.replace(/\/+$/, '')}/waInstance${idInstance}/sendFileByUrl/${apiTokenInstance}`;
+          const sendResp = await fetch(sendEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chatId,
+              urlFile,
+              fileName: file.name,
+              ...(caption ? { caption } : {}),
+            }),
+          });
+          const sendData = await sendResp.json().catch(async () => {
+            const txt = await sendResp.text().catch(() => '');
+            return { raw: txt };
+          });
+          if (!sendResp.ok) {
+            throw new Error(`Green API sendFileByUrl failed: ${JSON.stringify(sendData)}`);
+          }
+          const messageId =
+            typeof (sendData as { idMessage?: unknown }).idMessage === 'string'
+              ? (sendData as { idMessage: string }).idMessage
+              : null;
+
+          const mediaType = getWhatsAppMediaType(file.type); // reuse mapping for UI types
+
+          // Store in DB (use urlFile as media_url)
+          const messageObject = {
+            id: messageId || `outgoing_media_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            sender_id: cleanPhoneNumber,
+            receiver_id: user.id,
+            content: caption || `[${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)}]`,
+            timestamp: timestamp,
+            is_sent_by_me: true,
+            is_read: true,
+            message_type: mediaType,
+            media_data: JSON.stringify({
+              provider: 'green_api',
+              type: mediaType,
+              mime_type: file.type,
+              filename: file.name,
+              caption: caption,
+              media_url: urlFile,
+              s3_uploaded: false,
+              upload_timestamp: timestamp,
+            }),
+          };
+
+          const { error: dbError } = await supabase
+            .from('messages')
+            .insert([messageObject]);
+
+          if (dbError) {
+            console.error('Error storing message in database:', dbError);
+          } else {
+            console.log('Message stored successfully in database:', messageObject.id);
+          }
+
+          results.push({
+            success: true,
             filename: file.name,
-            caption: caption,
-            media_url: s3Url,
-            s3_uploaded: !!s3Url,
-            upload_timestamp: timestamp,
-            whatsapp_media_id: mediaUpload.id,
-          }),
-        };
-
-        const { error: dbError } = await supabase
-          .from('messages')
-          .insert([messageObject]);
-
-        if (dbError) {
-          console.error('Error storing message in database:', dbError);
+            messageId: messageId,
+            mediaType: mediaType,
+            s3Uploaded: false,
+          });
         } else {
-          console.log('Message stored successfully in database:', messageObject.id);
-        }
+          if (!settings.access_token_added || !settings.access_token || !settings.phone_number_id) {
+            console.error('WhatsApp API credentials not configured for user:', user.id);
+            return NextResponse.json(
+              { error: 'WhatsApp Access Token not configured. Please complete setup.' },
+              { status: 400 }
+            );
+          }
 
-        results.push({
-          success: true,
-          filename: file.name,
-          messageId: messageId,
-          mediaType: mediaType,
-          s3Uploaded: !!s3Url,
-        });
+          const accessToken = settings.access_token;
+          const phoneNumberId = settings.phone_number_id;
+          const apiVersion = settings.api_version || 'v23.0';
+
+          // Upload media to WhatsApp using user-specific credentials
+          const mediaUpload = await uploadMediaToWhatsApp(file, accessToken, phoneNumberId, apiVersion);
+          if (!mediaUpload) {
+            throw new Error('Failed to upload media to WhatsApp');
+          }
+
+          // Determine media type
+          const mediaType = getWhatsAppMediaType(file.type);
+
+          // Send media message using user-specific credentials
+          const messageResponse = await sendMediaMessage(
+            to, 
+            mediaUpload.id, 
+            mediaType, 
+            accessToken, 
+            phoneNumberId, 
+            apiVersion, 
+            caption
+          );
+          const messageId = messageResponse.messages?.[0]?.id;
+
+          console.log(`Media message sent successfully: ${messageId}`);
+
+          // Upload to S3 for our records
+          const mediaIdForS3 = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          const s3Url = await uploadFileToS3(file, user.id, mediaIdForS3);
+
+          // Store in database
+          const messageObject = {
+            id: messageId || `outgoing_media_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            sender_id: to, // Recipient phone number (sender in DB)
+            receiver_id: user.id, // Current authenticated user (receiver in DB)
+            content: caption || `[${mediaType.charAt(0).toUpperCase() + mediaType.slice(1)}]`,
+            timestamp: timestamp,
+            is_sent_by_me: true,
+            is_read: true, // Outgoing messages are already "read" by the sender
+            message_type: mediaType,
+            media_data: JSON.stringify({
+              provider: 'whatsapp_cloud',
+              type: mediaType,
+              id: mediaIdForS3,
+              mime_type: file.type,
+              filename: file.name,
+              caption: caption,
+              media_url: s3Url,
+              s3_uploaded: !!s3Url,
+              upload_timestamp: timestamp,
+              whatsapp_media_id: mediaUpload.id,
+            }),
+          };
+
+          const { error: dbError } = await supabase
+            .from('messages')
+            .insert([messageObject]);
+
+          if (dbError) {
+            console.error('Error storing message in database:', dbError);
+          } else {
+            console.log('Message stored successfully in database:', messageObject.id);
+          }
+
+          results.push({
+            success: true,
+            filename: file.name,
+            messageId: messageId,
+            mediaType: mediaType,
+            s3Uploaded: !!s3Url,
+          });
+        }
 
       } catch (error) {
         console.error(`Error processing file ${file.name}:`, error);
@@ -363,6 +479,7 @@ export async function POST(request: NextRequest) {
       failureCount,
       results,
       timestamp,
+      provider,
     });
 
   } catch (error) {
