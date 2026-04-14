@@ -11,6 +11,9 @@ export async function middleware(request: NextRequest) {
   if (request.nextUrl.pathname.startsWith("/api/webhook")) {
     return NextResponse.next();
   }
+  if (request.nextUrl.pathname.startsWith("/api/green/webhook")) {
+    return NextResponse.next();
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_OR_ANON_KEY;
@@ -66,6 +69,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)|api/webhook$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)|api/webhook$|api/green/webhook).*)",
   ],
 };

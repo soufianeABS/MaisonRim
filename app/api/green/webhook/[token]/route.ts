@@ -34,6 +34,19 @@ function extractPhoneFromChatId(chatId: string): string {
   return digitsOnly(chatId.split('@')[0] || chatId);
 }
 
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ token: string }> },
+) {
+  const { token } = await params;
+  return NextResponse.json({
+    ok: true,
+    message:
+      'Green webhook endpoint is reachable. Configure Green API to POST incomingMessageReceived here.',
+    tokenPrefix: token?.slice(0, 8),
+  });
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
@@ -44,6 +57,11 @@ export async function POST(
   try {
     if (!token) return new NextResponse('Forbidden', { status: 403 });
 
+    console.log('Green webhook hit:', {
+      tokenPrefix: token.slice(0, 8),
+      contentType: request.headers.get('content-type'),
+    });
+
     const { data: userSettings, error: settingsError } = await supabase
       .from('user_settings')
       .select('id')
@@ -51,6 +69,10 @@ export async function POST(
       .single();
 
     if (settingsError || !userSettings) {
+      console.warn('Green webhook: token not found', {
+        tokenPrefix: token.slice(0, 8),
+        settingsError: settingsError?.message,
+      });
       // Acknowledge to avoid retries
       return new NextResponse('OK', { status: 200 });
     }
@@ -59,6 +81,7 @@ export async function POST(
     const body = (await request.json()) as GreenIncomingMessageWebhook;
 
     if (body?.typeWebhook !== 'incomingMessageReceived') {
+      console.log('Green webhook: ignored type', { typeWebhook: body?.typeWebhook });
       return new NextResponse('OK', { status: 200 });
     }
 
