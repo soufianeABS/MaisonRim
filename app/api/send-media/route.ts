@@ -332,7 +332,11 @@ export async function POST(request: NextRequest) {
 
           const mediaType = getWhatsAppMediaType(file.type); // reuse mapping for UI types
 
-          // Store in DB (use urlFile as media_url)
+          // Upload to R2/S3 for our UI + long-term storage (same as WhatsApp Cloud)
+          const mediaIdForS3 = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          const s3Url = await uploadFileToS3(file, user.id, mediaIdForS3);
+
+          // Store in DB (prefer R2 url for UI rendering; keep Green urlFile too)
           const messageObject = {
             id: messageId || `outgoing_media_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             sender_id: cleanPhoneNumber,
@@ -348,8 +352,9 @@ export async function POST(request: NextRequest) {
               mime_type: file.type,
               filename: file.name,
               caption: caption,
-              media_url: urlFile,
-              s3_uploaded: false,
+              media_url: s3Url || urlFile,
+              s3_uploaded: !!s3Url,
+              green_url_file: urlFile,
               upload_timestamp: timestamp,
             }),
           };
@@ -369,7 +374,7 @@ export async function POST(request: NextRequest) {
             filename: file.name,
             messageId: messageId,
             mediaType: mediaType,
-            s3Uploaded: false,
+            s3Uploaded: !!s3Url,
           });
         } else {
           if (!settings.access_token_added || !settings.access_token || !settings.phone_number_id) {

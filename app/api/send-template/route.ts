@@ -180,10 +180,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get user's WhatsApp API credentials
+    // Get user's provider + WhatsApp API credentials
     const { data: settings, error: settingsError } = await supabase
       .from('user_settings')
-      .select('access_token, phone_number_id, api_version, access_token_added')
+      .select('messaging_provider, access_token, phone_number_id, api_version, access_token_added')
       .eq('id', user.id)
       .single();
 
@@ -192,6 +192,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'WhatsApp credentials not configured. Please complete setup.' },
         { status: 400 }
+      );
+    }
+
+    const provider =
+      (settings as { messaging_provider?: string | null }).messaging_provider ||
+      'whatsapp_cloud';
+    if (provider !== 'whatsapp_cloud') {
+      return NextResponse.json(
+        {
+          error:
+            'Templates are only supported with WhatsApp Cloud API. Switch provider to WhatsApp Cloud API to send templates.',
+          provider,
+        },
+        { status: 400 },
       );
     }
 
@@ -342,6 +356,7 @@ export async function POST(request: NextRequest) {
       templateName: templateName,
       displayContent: displayContent,
       timestamp: timestamp,
+      provider: 'whatsapp_cloud',
     });
 
   } catch (error) {

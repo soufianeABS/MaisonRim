@@ -69,24 +69,35 @@ export async function POST(
       );
     }
 
-    // Get user settings for WhatsApp credentials
+    // Get user settings for provider + credentials
     const { data: settings } = await supabase
       .from('user_settings')
-      .select('access_token, phone_number_id, api_version')
+      .select('messaging_provider, access_token, phone_number_id, api_version, green_api_url, green_id_instance, green_api_token_instance')
       .eq('id', user.id)
       .single();
 
-    if (!settings || !settings.access_token || !settings.phone_number_id) {
+    if (!settings) {
+      return NextResponse.json({ error: 'Settings not configured' }, { status: 400 });
+    }
+
+    const provider =
+      (settings as { messaging_provider?: string | null }).messaging_provider ||
+      'whatsapp_cloud';
+
+    if (provider === 'green_api' && templateName) {
       return NextResponse.json(
-        { error: 'WhatsApp credentials not configured' },
-        { status: 400 }
+        { error: 'Template broadcasts are not supported with Green API.', provider },
+        { status: 400 },
       );
     }
 
     const accessToken = settings.access_token;
     const phoneNumberId = settings.phone_number_id;
     const apiVersion = settings.api_version || 'v23.0';
-    const whatsappApiUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+    const whatsappApiUrl =
+      provider === 'whatsapp_cloud' && phoneNumberId
+        ? `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`
+        : null;
 
     const results = {
       success: 0,
@@ -109,11 +120,40 @@ export async function POST(
     for (const member of members) {
       try {
         const cleanPhoneNumber = member.user_id.replace(/\s+/g, '').replace(/[^\d]/g, '');
-        let whatsappResponse;
+        let whatsappResponse: Response | null = null;
         let messageContent = message;
         let messageMediaData = null;
 
-        if (templateName && templateData) {
+        if (provider === 'green_api') {
+          const greenApiUrl = (settings as { green_api_url?: string | null }).green_api_url;
+          const idInstance = (settings as { green_id_instance?: string | null }).green_id_instance;
+          const apiTokenInstance = (settings as { green_api_token_instance?: string | null })
+            .green_api_token_instance;
+          if (!greenApiUrl || !idInstance || !apiTokenInstance) {
+            throw new Error('Green API credentials not configured');
+          }
+
+          const endpoint = `${greenApiUrl.replace(/\/+$/, '')}/waInstance${idInstance}/sendMessage/${apiTokenInstance}`;
+          const chatId = `${cleanPhoneNumber}@c.us`;
+
+          whatsappResponse = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chatId,
+              message: message,
+              linkPreview: false,
+            }),
+          });
+
+          messageMediaData = JSON.stringify({
+            provider: 'green_api',
+            broadcast_group_id: groupId,
+          });
+        } else if (templateName && templateData) {
+          if (!whatsappApiUrl || !accessToken) {
+            throw new Error('WhatsApp credentials not configured');
+          }
           // Build template components for WhatsApp API
           const templateComponents = [];
 
@@ -247,6 +287,9 @@ export async function POST(
             broadcast_group_id: groupId // Mark as broadcast message
           });
         } else {
+          if (!whatsappApiUrl || !accessToken) {
+            throw new Error('WhatsApp credentials not configured');
+          }
           // Send text message via WhatsApp API
           const textMessage = {
             messaging_product: 'whatsapp',
@@ -287,7 +330,11 @@ export async function POST(
           results.success++;
 
           // Store the broadcast message in the database for this recipient
-          const messageId = responseData.messages?.[0]?.id || `broadcast_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          const messageId =
+            provider === 'green_api'
+              ? responseData.idMessage || `broadcast_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+              : responseData.messages?.[0]?.id ||
+                `broadcast_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
           
           const messageObject = {
             id: messageId,
@@ -326,6 +373,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       message: `Broadcast sent to ${results.success}/${members.length} members`,
+      provider,
       results: {
         total: members.length,
         success: results.success,
