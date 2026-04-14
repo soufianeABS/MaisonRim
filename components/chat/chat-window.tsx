@@ -557,6 +557,21 @@ export function ChatWindow({
           messages: recent.map((m) => ({
             content: m.content,
             is_sent_by_me: m.is_sent_by_me,
+            media: (() => {
+              try {
+                if (!m.media_data) return undefined;
+                const md =
+                  typeof m.media_data === "string" ? JSON.parse(m.media_data) : m.media_data;
+                if (!md || typeof md !== "object") return undefined;
+                return {
+                  type: md.type,
+                  mime_type: md.mime_type,
+                  media_url: md.media_url,
+                };
+              } catch {
+                return undefined;
+              }
+            })(),
           })),
           contactId: selectedUser.id,
           ...(agentId ? { agentId } : {}),

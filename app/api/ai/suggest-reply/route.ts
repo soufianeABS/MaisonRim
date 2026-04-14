@@ -13,6 +13,11 @@ const DEFAULT_MODEL = "gemini-2.0-flash";
 type IncomingMessage = {
   content?: string;
   is_sent_by_me?: boolean;
+  media?: {
+    type?: string;
+    mime_type?: string;
+    media_url?: string;
+  };
 };
 
 function normalizeTranscript(messages: IncomingMessage[]): SuggestReplyTranscriptLine[] {
@@ -143,6 +148,47 @@ export async function POST(request: NextRequest) {
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
+    // If the most recent customer message is an image with a URL, attach it for multimodal analysis.
+    const last = rawMessages[rawMessages.length - 1] as IncomingMessage | undefined;
+    const attachImage =
+      last &&
+      last.is_sent_by_me === false &&
+      last.media &&
+      last.media.type === 'image' &&
+      typeof last.media.media_url === 'string' &&
+      last.media.media_url.length > 0 &&
+      typeof last.media.mime_type === 'string' &&
+      last.media.mime_type.startsWith('image/');
+
+    let imagePart: { inlineData: { mimeType: string; data: string } } | null = null;
+    if (attachImage) {
+      try {
+        const resp = await fetch(last.media!.media_url!, { method: 'GET' });
+        if (resp.ok) {
+          const arr = await resp.arrayBuffer();
+          const buf = Buffer.from(arr);
+          // Keep payload small; Gemini inlineData should be limited.
+          const maxBytes = 4 * 1024 * 1024;
+          if (buf.length > 0 && buf.length <= maxBytes) {
+            imagePart = {
+              inlineData: {
+                mimeType: last.media!.mime_type!,
+                data: buf.toString('base64'),
+              },
+            };
+          } else {
+            console.warn('suggest-reply: image too large, skipping inlineData', {
+              bytes: buf.length,
+            });
+          }
+        } else {
+          console.warn('suggest-reply: could not download image', resp.status, resp.statusText);
+        }
+      } catch (e) {
+        console.warn('suggest-reply: image fetch failed', e);
+      }
+    }
+
     const geminiRes = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -153,7 +199,17 @@ export async function POST(request: NextRequest) {
         contents: [
           {
             role: "user",
-            parts: [{ text: userContent }],
+            parts: [
+              { text: userContent },
+              ...(imagePart
+                ? [
+                    {
+                      text: "The last customer message included an image. Analyze it and base your reply on what you see.",
+                    },
+                    imagePart,
+                  ]
+                : []),
+            ],
           },
         ],
         generationConfig: {
