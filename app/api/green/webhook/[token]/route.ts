@@ -64,7 +64,7 @@ export async function POST(
 
     const { data: userSettings, error: settingsError } = await supabase
       .from('user_settings')
-      .select('id, messaging_provider')
+      .select('id, messaging_provider, green_api_url, green_id_instance, green_api_token_instance')
       .eq('webhook_token', token)
       .single();
 
@@ -122,6 +122,29 @@ export async function POST(
       body.senderData?.chatName ||
       null;
 
+    // Best-effort fetch avatar (may be blocked by privacy settings)
+    let avatarUrl: string | null = null;
+    try {
+      const apiUrl = (userSettings as { green_api_url?: string | null }).green_api_url;
+      const idInstance = (userSettings as { green_id_instance?: string | null }).green_id_instance;
+      const apiTokenInstance = (userSettings as { green_api_token_instance?: string | null })
+        .green_api_token_instance;
+      if (apiUrl && idInstance && apiTokenInstance) {
+        const endpoint = `${apiUrl.replace(/\/+$/, '')}/waInstance${idInstance}/getAvatar/${apiTokenInstance}`;
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chatId: `${phoneNumber}@c.us` }),
+        });
+        const data = await resp.json().catch(() => null);
+        if (resp.ok && data && typeof data.urlAvatar === 'string' && data.urlAvatar) {
+          avatarUrl = data.urlAvatar;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
     // Upsert contact (per owner) so it appears in the inbox
     try {
       await supabase.from('contacts').upsert(
@@ -130,6 +153,7 @@ export async function POST(
             owner_id: businessOwnerId,
             phone: phoneNumber,
             whatsapp_name: contactName,
+            avatar_url: avatarUrl,
             last_active: messageTimestamp,
           },
         ],

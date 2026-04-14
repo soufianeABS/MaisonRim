@@ -1,6 +1,6 @@
 "use client";
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ThemeSwitcher } from "@/components/theme-switcher";
@@ -31,6 +31,7 @@ interface ChatUser {
   name: string;
   custom_name?: string;
   whatsapp_name?: string;
+  avatar_url?: string | null;
   last_active: string;
   last_message?: string;
   last_message_time?: string;
@@ -660,6 +661,13 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
             >
               <div className="flex items-center gap-3">
                 <Avatar className="h-12 w-12">
+                  {user.avatar_url ? (
+                    <AvatarImage
+                      src={user.avatar_url}
+                      alt={getDisplayName(user)}
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : null}
                   <AvatarFallback className="bg-green-100 text-green-700 font-semibold">
                     {getDisplayName(user).charAt(0).toUpperCase()}
                   </AvatarFallback>

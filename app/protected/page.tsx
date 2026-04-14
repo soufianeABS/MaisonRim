@@ -14,6 +14,7 @@ interface ChatUser {
   name: string;
   custom_name?: string;
   whatsapp_name?: string;
+  avatar_url?: string | null;
   last_active: string;
   unread_count?: number;
   last_message_time?: string;
@@ -183,6 +184,7 @@ export default function ChatPage() {
           name: user.display_name, // This now uses the priority logic from the view
           custom_name: user.custom_name,
           whatsapp_name: user.whatsapp_name,
+          avatar_url: user.avatar_url ?? null,
           last_active: user.last_active,
           unread_count: user.unread_count || 0,
           last_message_time: user.last_message_time,
@@ -656,6 +658,7 @@ export default function ChatPage() {
         name: user.display_name,
         custom_name: user.custom_name,
         whatsapp_name: user.whatsapp_name,
+        avatar_url: user.avatar_url ?? null,
         last_active: user.last_active,
         unread_count: user.unread_count || 0,
         last_message_time: user.last_message_time,
