@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, AlertCircle, Loader2, Copy, Check, ExternalLink, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
+import { getPublicSiteUrl } from "@/lib/site-url";
 
 const PROVIDER_COUNTRIES = [
   { id: 'fr', name: 'France', dialCode: '+33' },
@@ -72,6 +73,9 @@ export default function SetupPage() {
   const [savingGreen, setSavingGreen] = useState(false);
   const [greenError, setGreenError] = useState<string | null>(null);
   const [greenSuccess, setGreenSuccess] = useState(false);
+  const [enablingGreenWebhook, setEnablingGreenWebhook] = useState(false);
+  const [greenWebhookError, setGreenWebhookError] = useState<string | null>(null);
+  const [greenWebhookSuccess, setGreenWebhookSuccess] = useState(false);
   
   // Webhook form
   const [verifyToken, setVerifyToken] = useState("");
@@ -368,6 +372,11 @@ export default function SetupPage() {
   const webhookUrl = typeof window !== 'undefined' && settings?.webhook_token
     ? `${window.location.origin}/api/webhook/${settings.webhook_token}`
     : '';
+
+  const greenWebhookUrl =
+    typeof window !== 'undefined' && settings?.webhook_token
+      ? `${window.location.origin}/api/green/webhook/${settings.webhook_token}`
+      : '';
   
   const greenReady = !!(
     settings?.green_api_url &&
@@ -902,6 +911,87 @@ export default function SetupPage() {
                   )}
                 </Button>
               </form>
+
+              <div className="mt-6 space-y-3 border-t border-border pt-4">
+                <div className="space-y-2">
+                  <Label>Green API Webhook URL (receive messages)</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="text"
+                      value={greenWebhookUrl || 'Loading webhook url...'}
+                      readOnly
+                      className="font-mono text-sm bg-muted"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => copyToClipboard(greenWebhookUrl, 'webhook')}
+                      disabled={!greenWebhookUrl}
+                      title="Copy webhook url"
+                    >
+                      {copiedWebhookUrl ? (
+                        <Check className="h-4 w-4 text-green-600" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    To receive messages via Green API, your app must be publicly accessible. Set{' '}
+                    <span className="font-mono">NEXT_PUBLIC_SITE_URL</span> to your domain in production.
+                  </p>
+                </div>
+
+                {greenWebhookError && (
+                  <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/20 p-3 rounded-lg flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <span>{greenWebhookError}</span>
+                  </div>
+                )}
+                {greenWebhookSuccess && (
+                  <div className="text-sm text-green-600 bg-green-50 dark:bg-green-950/20 p-3 rounded-lg flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4" />
+                    <span>Green API webhook enabled! Incoming messages will appear here.</span>
+                  </div>
+                )}
+
+                <Button
+                  type="button"
+                  className="w-full"
+                  disabled={enablingGreenWebhook}
+                  onClick={async () => {
+                    setEnablingGreenWebhook(true);
+                    setGreenWebhookError(null);
+                    setGreenWebhookSuccess(false);
+                    try {
+                      // Quick client-side hint for local dev
+                      const base = getPublicSiteUrl();
+                      if (!base) {
+                        throw new Error('NEXT_PUBLIC_SITE_URL is not set. Set it to your public domain to enable webhooks.');
+                      }
+                      const resp = await fetch('/api/green/enable-webhook', { method: 'POST' });
+                      const data = await resp.json();
+                      if (!resp.ok) throw new Error(data.error || 'Failed to enable webhook');
+                      setGreenWebhookSuccess(true);
+                      setTimeout(() => setGreenWebhookSuccess(false), 3000);
+                    } catch (e) {
+                      setGreenWebhookError(e instanceof Error ? e.message : 'Failed to enable webhook');
+                    } finally {
+                      setEnablingGreenWebhook(false);
+                    }
+                  }}
+                >
+                  {enablingGreenWebhook ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Enabling...
+                    </>
+                  ) : (
+                    'Enable Green API Webhook'
+                  )}
+                </Button>
+              </div>
             </CardContent>
           </Card>
           
