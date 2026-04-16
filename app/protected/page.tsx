@@ -82,6 +82,10 @@ export default function ChatPage() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [isSetupComplete, setIsSetupComplete] = useState<boolean | null>(null);
   const [checkingSetup, setCheckingSetup] = useState(true);
+  /** Shown when setup is incomplete — drives accurate copy for Meta vs Green API. */
+  const [setupProviderHint, setSetupProviderHint] = useState<
+    'whatsapp_cloud' | 'green_api'
+  >('whatsapp_cloud');
   const [broadcastGroupId, setBroadcastGroupId] = useState<string | null>(null);
   const [broadcastGroupName, setBroadcastGroupName] = useState<string | null>(null);
   const supabase = createClient();
@@ -136,6 +140,7 @@ export default function ChatPage() {
         const data = await response.json();
         
         const provider = data.settings?.messaging_provider || 'whatsapp_cloud';
+        setSetupProviderHint(provider === 'green_api' ? 'green_api' : 'whatsapp_cloud');
         const hasCommonPhone = !!data.settings?.provider_phone_number;
         const greenReady = !!(
           data.settings?.green_api_url &&
@@ -1006,8 +1011,20 @@ export default function ChatPage() {
           <div className="space-y-2">
             <h2 className="text-2xl font-bold">Setup Required</h2>
             <p className="text-muted-foreground">
-              Please complete the WhatsApp setup to access the chat interface. 
-              You need to configure either the Access Token or Webhook to continue.
+              {setupProviderHint === 'green_api' ? (
+                <>
+                  Finish setup on the setup page: save your{' '}
+                  <strong className="text-foreground font-medium">business phone number</strong>{' '}
+                  and your Green API fields (apiUrl, idInstance, apiTokenInstance). The Access Token /
+                  Webhook section applies to Meta only, not Green API.
+                </>
+              ) : (
+                <>
+                  Save your <strong className="text-foreground font-medium">business phone number</strong>{' '}
+                  and configure the <strong className="text-foreground font-medium">Access Token</strong>{' '}
+                  and/or <strong className="text-foreground font-medium">Webhook</strong> on the setup page.
+                </>
+              )}
             </p>
           </div>
           

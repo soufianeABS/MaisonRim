@@ -385,10 +385,31 @@ export default function SetupPage() {
   );
   const whatsappReady = !!(settings?.access_token_added || settings?.webhook_verified);
   const hasCommonPhone = !!settings?.provider_phone_number;
+  const activeProvider = settings?.messaging_provider || 'whatsapp_cloud';
   const isSetupComplete =
-    (settings?.messaging_provider || 'whatsapp_cloud') === 'green_api'
+    activeProvider === 'green_api'
       ? greenReady && hasCommonPhone
       : whatsappReady && hasCommonPhone;
+
+  const setupIncompleteItems: string[] = [];
+  if (!hasCommonPhone) {
+    setupIncompleteItems.push(
+      'Business phone number — use “Save Phone Number” in the Messaging Provider section above.',
+    );
+  }
+  if (activeProvider === 'green_api') {
+    if (!greenReady) {
+      setupIncompleteItems.push(
+        'Green API — save apiUrl, idInstance, and apiTokenInstance, then “Save Green API Settings”.',
+      );
+    }
+  } else {
+    if (!whatsappReady) {
+      setupIncompleteItems.push(
+        'WhatsApp Cloud — save Access Token (send) and/or Webhook verify token (receive).',
+      );
+    }
+  }
   
   if (loading) {
     return (
@@ -485,13 +506,33 @@ export default function SetupPage() {
             <CardContent className="pt-6">
               <div className="flex items-start gap-3">
                 <AlertCircle className="h-6 w-6 text-blue-600 dark:text-blue-400 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-blue-900 dark:text-blue-100 mb-1">
-                    Complete at least one setup to continue
+                <div className="space-y-2 min-w-0">
+                  <p className="font-semibold text-blue-900 dark:text-blue-100">
+                    Finish setup to unlock chat
                   </p>
                   <p className="text-sm text-blue-700 dark:text-blue-300">
-                    Configure either the Access Token (for sending messages) or Webhook (for receiving messages) to unlock the chat interface
+                    {activeProvider === 'green_api' ? (
+                      <>
+                        Green API requires a saved{' '}
+                        <strong className="font-semibold">business phone number</strong> plus{' '}
+                        <strong className="font-semibold">apiUrl, idInstance, and apiTokenInstance</strong>.
+                        For incoming messages, use “Enable Green API Webhook” below after saving credentials.
+                      </>
+                    ) : (
+                      <>
+                        Save your <strong className="font-semibold">business phone number</strong>, then
+                        configure the <strong className="font-semibold">Access Token</strong> (send) and/or{' '}
+                        <strong className="font-semibold">Webhook</strong> (receive).
+                      </>
+                    )}
                   </p>
+                  {setupIncompleteItems.length > 0 && (
+                    <ul className="text-sm text-blue-800 dark:text-blue-200 list-disc pl-5 space-y-1">
+                      {setupIncompleteItems.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
             </CardContent>
