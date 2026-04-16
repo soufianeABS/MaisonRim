@@ -25,6 +25,14 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { GroupsList } from "./groups-list";
 import { GroupManagementDialog } from "./group-management-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type ContactStatus = {
   id: string;
@@ -76,6 +84,10 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
   const [searchTerm, setSearchTerm] = useState("");
   const [statuses, setStatuses] = useState<ContactStatus[]>([]);
   const [selectedStatusId, setSelectedStatusId] = useState<string | null>(null);
+  const [statusOverrides, setStatusOverrides] = useState<
+    Record<string, { status_id: string | null; status_name: string | null; status_color: string | null }>
+  >({});
+  const [updatingStatusFor, setUpdatingStatusFor] = useState<Set<string>>(new Set());
   const [showNewChat, setShowNewChat] = useState(false);
   const [newUsers, setNewUsers] = useState<NewUserInput[]>([
     { id: '1', phoneNumber: '', customName: '' }
@@ -214,9 +226,48 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
     const displayName = getDisplayName(user);
     const searchableText = `${displayName} ${user.whatsapp_name || ''} ${user.id}`.toLowerCase();
     const matchesSearch = searchableText.includes(searchTerm.toLowerCase());
-    const matchesStatus = selectedStatusId ? user.status_id === selectedStatusId : true;
+    const effectiveStatusId = (statusOverrides[user.id]?.status_id ?? user.status_id) || null;
+    const matchesStatus = selectedStatusId ? effectiveStatusId === selectedStatusId : true;
     return matchesSearch && matchesStatus;
   });
+
+  const assignContactStatus = async (contactId: string, statusId: string | null) => {
+    if (!contactId) return;
+    if (updatingStatusFor.has(contactId)) return;
+    setUpdatingStatusFor((prev) => new Set(prev).add(contactId));
+    try {
+      const res = await fetch(`/api/contacts/${encodeURIComponent(contactId)}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status_id: statusId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to update status");
+
+      const picked =
+        statusId ? statuses.find((s) => s.id === statusId) ?? null : null;
+
+      setStatusOverrides((prev) => ({
+        ...prev,
+        [contactId]: {
+          status_id: statusId,
+          status_name: picked?.name ?? null,
+          status_color: picked?.color ?? null,
+        },
+      }));
+
+      // Refresh list (so unread/last_message and DB-backed views stay consistent)
+      await onUsersUpdate?.();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not update tag");
+    } finally {
+      setUpdatingStatusFor((prev) => {
+        const next = new Set(prev);
+        next.delete(contactId);
+        return next;
+      });
+    }
+  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -826,18 +877,71 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                       <span className="text-xs text-muted-foreground">
                         {formatTime(user.last_message_time || user.last_active)}
                       </span>
-                      {user.status_name && user.status_color ? (
-                        <span
-                          className="hidden sm:inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium text-foreground/90"
-                          title={`Status: ${user.status_name}`}
-                        >
-                          <span
-                            className="inline-block h-2 w-2 rounded-full"
-                            style={{ backgroundColor: String(user.status_color) }}
-                          />
-                          {user.status_name}
-                        </span>
-                      ) : null}
+                    {(() => {
+                      const ov = statusOverrides[user.id];
+                      const statusName = ov?.status_name ?? user.status_name ?? null;
+                      const statusColor = ov?.status_color ?? user.status_color ?? null;
+                      const isUpdating = updatingStatusFor.has(user.id);
+
+                      return (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className={`hidden sm:inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium text-foreground/90 hover:bg-muted/60 transition-colors ${
+                                isUpdating ? "opacity-60" : ""
+                              }`}
+                              title={statusName ? `Status: ${statusName}` : "Set tag"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                              }}
+                              disabled={isUpdating}
+                            >
+                              {statusName && statusColor ? (
+                                <span
+                                  className="inline-block h-2 w-2 rounded-full"
+                                  style={{ backgroundColor: String(statusColor) }}
+                                />
+                              ) : (
+                                <span className="inline-block h-2 w-2 rounded-full border" />
+                              )}
+                              <span className="max-w-[120px] truncate">
+                                {statusName ?? "Tag"}
+                              </span>
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            align="end"
+                            className="w-56"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <DropdownMenuLabel>Choose tag</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onSelect={() => {
+                                void assignContactStatus(user.id, null);
+                              }}
+                            >
+                              No tag
+                            </DropdownMenuItem>
+                            {statuses.map((s) => (
+                              <DropdownMenuItem
+                                key={s.id}
+                                onSelect={() => {
+                                  void assignContactStatus(user.id, s.id);
+                                }}
+                              >
+                                <span
+                                  className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
+                                  style={{ backgroundColor: s.color }}
+                                />
+                                <span className="truncate">{s.name}</span>
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      );
+                    })()}
                       {(user.unread_count || 0) > 0 && (
                         <div className="bg-green-600 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-medium shadow-md animate-scale-in">
                           {user.unread_count! > 99 ? '99+' : user.unread_count}
