@@ -146,6 +146,8 @@ export function ChatWindow({
   const lastRefreshAtRef = useRef<Record<string, number>>({});
   const [loadingMedia, setLoadingMedia] = useState<Set<string>>(new Set());
   const [mediaUrlOverrides, setMediaUrlOverrides] = useState<Record<string, string>>({});
+  const [runningAction, setRunningAction] = useState(false);
+  const [mappedStatusIds, setMappedStatusIds] = useState<Set<string>>(new Set());
   const [audioDurations, setAudioDurations] = useState<{ [key: string]: number }>({});
   const [audioCurrentTime, setAudioCurrentTime] = useState<{ [key: string]: number }>({});
   const [showMediaUpload, setShowMediaUpload] = useState(false);
@@ -177,6 +179,31 @@ export function ChatWindow({
     setIsLocalhostDev(
       h === "localhost" || h === "127.0.0.1" || h === "::1",
     );
+  }, []);
+
+  // Load available ApiActions (Tag -> API mappings) once, so we can disable
+  // the "Run action" button when no mapping exists for the tag.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/api-actions", { cache: "no-store" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return;
+        const ids = new Set<string>();
+        const actions = Array.isArray(data?.actions) ? (data.actions as Array<{ status_id?: unknown }>) : [];
+        for (const a of actions) {
+          if (typeof a?.status_id === "string" && a.status_id) ids.add(a.status_id);
+        }
+        if (!cancelled) setMappedStatusIds(ids);
+      } catch {
+        // ignore
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const insertDevTestMessages = async (
@@ -655,6 +682,45 @@ export function ChatWindow({
   const handleUpdateName = async (userId: string, customName: string) => {
     if (onUpdateName) {
       await onUpdateName(userId, customName);
+    }
+  };
+
+  const runDynamicAction = async () => {
+    if (!selectedUser || broadcastGroupName) return;
+    if (runningAction) return;
+
+    const statusId = selectedUser.status_id ?? null;
+    const tagName = selectedUser.status_name ?? undefined;
+
+    if (!statusId && !tagName) {
+      alert("This contact has no tag/status to run an action for.");
+      return;
+    }
+
+    setRunningAction(true);
+    try {
+      const res = await fetch("/api/actions/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: selectedUser.id,
+          statusId,
+          tagName,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || "Action failed");
+      }
+      // Response is stored in contacts.metadata by the server; show quick confirmation.
+      console.log("Dynamic action executed:", data);
+      alert("Action executed. Response saved to conversation metadata.");
+      await onUsersUpdate?.();
+    } catch (e) {
+      console.error("Run action:", e);
+      alert(e instanceof Error ? e.message : "Action failed");
+    } finally {
+      setRunningAction(false);
     }
   };
 
@@ -1519,6 +1585,42 @@ export function ChatWindow({
                 )}
               </p>
             </div>
+
+            {!broadcastGroupName && (
+              (() => {
+                const statusId = selectedUser.status_id ?? null;
+                const hasTag = !!(selectedUser.status_id || selectedUser.status_name);
+                const hasMapping = statusId ? mappedStatusIds.has(statusId) : false;
+                const disabled = runningAction || !hasTag || (statusId ? !hasMapping : true);
+
+                return (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => void runDynamicAction()}
+                disabled={disabled}
+                title={
+                  !hasTag
+                    ? "No tag/status on this contact"
+                    : !hasMapping
+                      ? "No action mapping for this tag"
+                      : "Run dynamic action for this tag"
+                }
+              >
+                {runningAction ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Running…
+                  </>
+                ) : (
+                  "Run action"
+                )}
+              </Button>
+                );
+              })()
+            )}
             {isLocalhostDev && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

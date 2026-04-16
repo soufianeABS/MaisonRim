@@ -1,0 +1,297 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+
+type Status = { id: string; name: string; color: string };
+
+type ApiAction = {
+  id: string;
+  status_id: string | null;
+  tag_name: string;
+  url: string;
+  method: "GET" | "POST";
+  payload_template: unknown;
+  response_map: unknown;
+  updated_at: string;
+};
+
+function pretty(v: unknown): string {
+  try {
+    return JSON.stringify(v ?? {}, null, 2);
+  } catch {
+    return "{}";
+  }
+}
+
+export default function ActionsPage() {
+  const [statuses, setStatuses] = useState<Status[]>([]);
+  const [actions, setActions] = useState<ApiAction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [selectedStatusId, setSelectedStatusId] = useState<string>("");
+  const [url, setUrl] = useState("");
+  const [method, setMethod] = useState<"GET" | "POST">("POST");
+  const [payloadTemplate, setPayloadTemplate] = useState(pretty({ conversationId: "{{conversationId}}" }));
+  const [responseMap, setResponseMap] = useState(pretty({ "metadata.remote_url": "$.url" }));
+
+  const actionByStatus = useMemo(() => {
+    const map = new Map<string, ApiAction>();
+    for (const a of actions) {
+      if (a.status_id) map.set(a.status_id, a);
+    }
+    return map;
+  }, [actions]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [sRes, aRes] = await Promise.all([
+        fetch("/api/contact-statuses", { cache: "no-store" }),
+        fetch("/api/api-actions", { cache: "no-store" }),
+      ]);
+      const sData = await sRes.json();
+      const aData = await aRes.json();
+      if (!sRes.ok) throw new Error(sData.error || "Failed to load statuses");
+      if (!aRes.ok) throw new Error(aData.error || "Failed to load actions");
+      setStatuses(sData.statuses ?? []);
+      setActions(aData.actions ?? []);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const upsertForStatus = async () => {
+    if (!selectedStatusId) throw new Error("Pick a tag");
+    const existing = actionByStatus.get(selectedStatusId) ?? null;
+    const payload = (() => {
+      try {
+        return JSON.parse(payloadTemplate);
+      } catch {
+        throw new Error("payload_template must be valid JSON");
+      }
+    })();
+    const map = (() => {
+      try {
+        return JSON.parse(responseMap);
+      } catch {
+        throw new Error("response_map must be valid JSON");
+      }
+    })();
+
+    const body = {
+      status_id: selectedStatusId,
+      tag_name: "",
+      url: url.trim(),
+      method,
+      payload_template: payload,
+      response_map: map,
+    };
+    if (!body.url) throw new Error("URL is required");
+
+    const res = existing
+      ? await fetch(`/api/api-actions/${existing.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        })
+      : await fetch("/api/api-actions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Save failed");
+    await load();
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await upsertForStatus();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (actionId: string) => {
+    if (!confirm("Delete this mapping?")) return;
+    const res = await fetch(`/api/api-actions/${actionId}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.error || "Delete failed");
+      return;
+    }
+    await load();
+  };
+
+  const handlePickStatus = (id: string) => {
+    setSelectedStatusId(id);
+    const existing = actionByStatus.get(id) ?? null;
+    if (existing) {
+      setUrl(existing.url ?? "");
+      setMethod(existing.method ?? "POST");
+      setPayloadTemplate(pretty(existing.payload_template));
+      setResponseMap(pretty(existing.response_map));
+    } else {
+      setUrl("");
+      setMethod("POST");
+      setPayloadTemplate(pretty({ conversationId: "{{conversationId}}" }));
+      setResponseMap(pretty({ "metadata.remote_url": "$.url" }));
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      <header className="border-b border-border bg-muted/40">
+        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center gap-4">
+          <Button variant="ghost" size="icon" asChild>
+            <Link href="/protected" title="Back to chats">
+              <ArrowLeft className="h-5 w-5" />
+            </Link>
+          </Button>
+          <div>
+            <h1 className="text-lg font-semibold">Dynamic actions</h1>
+            <p className="text-sm text-muted-foreground">
+              Map Tags → API calls. Responses are stored on the conversation metadata.
+            </p>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+        {loading ? (
+          <div className="flex justify-center py-12 text-muted-foreground gap-2 items-center">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            Loading…
+          </div>
+        ) : (
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Create / update mapping</CardTitle>
+                <CardDescription>
+                  Placeholders: <code>{"{{conversationId}}"}</code>, <code>{"{{ownerId}}"}</code>,{" "}
+                  <code>{"{{tagName}}"}</code>, and <code>{"{{settings.<field>}}"}</code>.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Tag</Label>
+                    <div className="flex gap-2 flex-wrap">
+                      {statuses.map((s) => {
+                        const active = selectedStatusId === s.id;
+                        const has = actionByStatus.has(s.id);
+                        return (
+                          <Button
+                            key={s.id}
+                            type="button"
+                            variant={active ? "default" : "outline"}
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => handlePickStatus(s.id)}
+                          >
+                            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+                            {s.name}
+                            {has ? <span className="ml-1 text-[10px] opacity-70">(mapped)</span> : null}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="act-url">URL</Label>
+                    <Input id="act-url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://api.example.com/endpoint" />
+                    <div className="flex gap-2">
+                      <Button type="button" variant={method === "POST" ? "default" : "outline"} size="sm" onClick={() => setMethod("POST")}>
+                        POST
+                      </Button>
+                      <Button type="button" variant={method === "GET" ? "default" : "outline"} size="sm" onClick={() => setMethod("GET")}>
+                        GET
+                      </Button>
+                      <Button type="button" className="ml-auto gap-2" onClick={() => void handleSave()} disabled={saving || !selectedStatusId}>
+                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                        Save mapping
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="act-payload">payload_template (JSON)</Label>
+                    <Textarea id="act-payload" value={payloadTemplate} onChange={(e) => setPayloadTemplate(e.target.value)} rows={12} className="font-mono text-xs" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="act-map">response_map (JSON)</Label>
+                    <Textarea id="act-map" value={responseMap} onChange={(e) => setResponseMap(e.target.value)} rows={12} className="font-mono text-xs" />
+                    <p className="text-xs text-muted-foreground">
+                      Keys can be <code>metadata.foo</code> or a contact column: <code>custom_name</code>, <code>whatsapp_name</code>, <code>avatar_url</code>.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Existing mappings</CardTitle>
+                <CardDescription>One mapping per tag.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {actions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No mappings yet.</p>
+                ) : (
+                  actions.map((a) => {
+                    const status = statuses.find((s) => s.id === a.status_id);
+                    return (
+                      <div key={a.id} className="flex items-center gap-3 rounded-lg border p-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            {status ? (
+                              <>
+                                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: status.color }} />
+                                <span className="text-sm font-medium">{status.name}</span>
+                              </>
+                            ) : (
+                              <span className="text-sm font-medium">{a.tag_name || "Tag"}</span>
+                            )}
+                            <span className="text-xs text-muted-foreground">{a.method}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground truncate">{a.url}</p>
+                        </div>
+                        <Button type="button" variant="outline" size="sm" onClick={() => handlePickStatus(a.status_id ?? "")} disabled={!a.status_id}>
+                          Edit
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => void handleDelete(a.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    );
+                  })
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
