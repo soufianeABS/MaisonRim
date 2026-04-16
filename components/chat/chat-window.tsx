@@ -141,7 +141,11 @@ export function ChatWindow({
   const [messageInput, setMessageInput] = useState("");
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [refreshingUrls, setRefreshingUrls] = useState<Set<string>>(new Set());
+  const refreshingUrlsRef = useRef<Set<string>>(new Set());
+  const refreshedOnceRef = useRef<Set<string>>(new Set());
+  const lastRefreshAtRef = useRef<Record<string, number>>({});
   const [loadingMedia, setLoadingMedia] = useState<Set<string>>(new Set());
+  const [mediaUrlOverrides, setMediaUrlOverrides] = useState<Record<string, string>>({});
   const [audioDurations, setAudioDurations] = useState<{ [key: string]: number }>({});
   const [audioCurrentTime, setAudioCurrentTime] = useState<{ [key: string]: number }>({});
   const [showMediaUpload, setShowMediaUpload] = useState(false);
@@ -788,7 +792,24 @@ export function ChatWindow({
   };
 
   const refreshMediaUrl = async (messageId: string) => {
-    if (refreshingUrls.has(messageId)) return;
+    if (!messageId) return;
+
+    // Avoid spamming the API if media element repeatedly errors.
+    // - only 1 in-flight per message
+    // - only 1 attempt per message per page-load (manual refresh button still works by clearing this set if needed)
+    // - cooldown window to avoid bursty retries during re-renders
+    const now = Date.now();
+    const last = lastRefreshAtRef.current[messageId] ?? 0;
+    const COOLDOWN_MS = 5000;
+    if (now - last < COOLDOWN_MS) return;
+    lastRefreshAtRef.current[messageId] = now;
+    if (refreshedOnceRef.current.has(messageId)) return;
+
+    // Use a ref as an immediate lock to avoid rapid duplicate calls
+    // (state updates are async and onError can fire multiple times quickly).
+    if (refreshingUrlsRef.current.has(messageId)) return;
+    refreshingUrlsRef.current.add(messageId);
+    refreshedOnceRef.current.add(messageId);
 
     setRefreshingUrls(prev => new Set(prev).add(messageId));
 
@@ -798,18 +819,24 @@ export function ChatWindow({
         headers: {
           'Content-Type': 'application/json',
         },
+        cache: 'no-store',
         body: JSON.stringify({ messageId }),
       });
 
       if (response.ok) {
         const result = await response.json();
         console.log('Media URL refreshed:', result);
+        if (result?.newUrl && typeof result.newUrl === "string") {
+          setMediaUrlOverrides((prev) => ({ ...prev, [messageId]: result.newUrl }));
+        }
       } else {
-        console.error('Failed to refresh media URL:', await response.text());
+        const txt = await response.text();
+        console.error('Failed to refresh media URL:', txt);
       }
     } catch (error) {
       console.error('Error refreshing media URL:', error);
     } finally {
+      refreshingUrlsRef.current.delete(messageId);
       setRefreshingUrls(prev => {
         const newSet = new Set(prev);
         newSet.delete(messageId);
@@ -856,12 +883,19 @@ export function ChatWindow({
 
     const isRefreshing = refreshingUrls.has(message.id);
     const isMediaLoading = loadingMedia.has(message.id);
+    const effectiveMediaUrl =
+      mediaUrlOverrides[message.id] || mediaData?.media_url || undefined;
+    const isPresignedR2Url =
+      typeof effectiveMediaUrl === "string" &&
+      (effectiveMediaUrl.includes("X-Amz-Signature=") ||
+        effectiveMediaUrl.includes("X-Amz-Credential=") ||
+        effectiveMediaUrl.includes("X-Amz-Date="));
 
     switch (messageType) {
       case 'image':
         return (
           <div className={baseClasses}>
-            {mediaData?.media_url && mediaData.s3_uploaded ? (
+            {effectiveMediaUrl && mediaData?.s3_uploaded ? (
               <div className="mb-2 relative overflow-hidden rounded-xl">
                 {isMediaLoading && (
                   <div className="absolute inset-0 bg-gray-200 dark:bg-gray-700 flex items-center justify-center rounded-xl">
@@ -872,13 +906,13 @@ export function ChatWindow({
                   </div>
                 )}
                 <Image
-                  src={mediaData.media_url}
+                  src={effectiveMediaUrl}
                   alt={mediaData.caption || "Shared image"}
                   width={300}
                   height={200}
                   className="max-w-[300px] max-h-[400px] w-auto h-auto object-cover cursor-pointer rounded-xl"
                   style={{ maxWidth: '100%', height: 'auto' }}
-                  onClick={() => window.open(mediaData.media_url, '_blank')}
+                  onClick={() => window.open(effectiveMediaUrl, '_blank')}
                   onLoadingComplete={() => handleMediaLoad(message.id)}
                   onLoadStart={() => handleMediaLoadStart(message.id)}
                   onError={() => {
@@ -889,7 +923,8 @@ export function ChatWindow({
                   priority={false}
                   placeholder="blur"
                   blurDataURL="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAhEAACAQMDBQAAAAAAAAAAAAABAgMABAUGIWGRkqGx0f/EABUBAQEAAAAAAAAAAAAAAAAAAAMF/8QAGhEAAgIDAAAAAAAAAAAAAAAAAAECEgMRkf/aAAwDAQACEQMRAD8AltJagyeH0AthI5xdrLcNM91BF5pX2HaH9bcfaSXWGaRmknyJckliyjqTzSlT54b6bk+h0R+Rq19G9D/Z"
-                  unoptimized={false}
+                  // Presigned URLs are time-bound; avoid Next's server-side optimizer fetch.
+                  unoptimized={isPresignedR2Url}
                 />
                 {isRefreshing && (
                   <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-xl">
@@ -950,12 +985,12 @@ export function ChatWindow({
                   <p className="text-xs text-blue-500 mt-1">Preparing download...</p>
                 )}
               </div>
-              {mediaData?.media_url && mediaData.s3_uploaded && (
+              {effectiveMediaUrl && mediaData?.s3_uploaded && (
                 <Button
                   size="sm"
                   variant="ghost"
                   className={`p-2 h-10 w-10 ${isOwn ? 'hover:bg-green-600' : 'hover:bg-gray-200'}`}
-                  onClick={() => downloadMedia(mediaData.media_url!, mediaData?.filename || 'document')}
+                  onClick={() => downloadMedia(effectiveMediaUrl, mediaData?.filename || 'document')}
                   disabled={isRefreshing}
                 >
                   {isRefreshing ? (
@@ -995,8 +1030,8 @@ export function ChatWindow({
                 size="sm"
                 variant="ghost"
                 className={`p-3 rounded-full ${isOwn ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-500 hover:bg-blue-600'} text-white`}
-                onClick={() => mediaData?.media_url && handleAudioPlay(message.id, mediaData.media_url)}
-                disabled={!mediaData?.media_url || !mediaData.s3_uploaded || isRefreshing}
+                onClick={() => effectiveMediaUrl && handleAudioPlay(message.id, effectiveMediaUrl)}
+                disabled={!effectiveMediaUrl || !mediaData?.s3_uploaded || isRefreshing}
               >
                 {isRefreshing ? (
                   <RefreshCw className="h-5 w-5 animate-spin" />
@@ -1060,7 +1095,7 @@ export function ChatWindow({
       case 'video':
         return (
           <div className={baseClasses}>
-            {mediaData?.media_url && mediaData.s3_uploaded ? (
+            {effectiveMediaUrl && mediaData?.s3_uploaded ? (
               <div className="mb-2 relative overflow-hidden rounded-xl max-w-[400px] max-h-[300px]">
                 {isMediaLoading && (
                   <div className="absolute inset-0 bg-gray-200 dark:bg-gray-700 flex items-center justify-center rounded-xl z-10">
@@ -1082,7 +1117,7 @@ export function ChatWindow({
                     refreshMediaUrl(message.id);
                   }}
                 >
-                  <source src={mediaData.media_url} type={mediaData.mime_type} />
+                  <source src={effectiveMediaUrl} type={mediaData?.mime_type} />
                   Your browser does not support the video tag.
                 </video>
                 {isRefreshing && (
@@ -1144,6 +1179,11 @@ export function ChatWindow({
                         height={150}
                         className="max-w-full h-auto object-cover rounded-lg"
                         style={{ maxWidth: '100%', height: 'auto' }}
+                        unoptimized={
+                          mediaData.header.media_url.includes("X-Amz-Signature=") ||
+                          mediaData.header.media_url.includes("X-Amz-Credential=") ||
+                          mediaData.header.media_url.includes("X-Amz-Date=")
+                        }
                       />
                     </div>
                   ) : mediaData.header.format === 'VIDEO' && mediaData.header.media_url ? (

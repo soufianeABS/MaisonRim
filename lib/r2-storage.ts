@@ -23,6 +23,17 @@ const s3Client = new S3Client({
 
 const BUCKET_NAME = process.env.R2_BUCKET_NAME || '';
 
+const S3_PRESIGN_MAX_EXPIRES_SECONDS = 7 * 24 * 60 * 60; // 7 days (SigV4 limit)
+const DEFAULT_PRESIGN_EXPIRES_SECONDS = 4 * 24 * 60 * 60; // 4 days
+
+function getPresignExpiresSeconds(): number {
+  const raw = process.env.R2_PRESIGNED_URL_EXPIRES_IN_SECONDS;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  const desired = Number.isFinite(parsed) ? parsed : DEFAULT_PRESIGN_EXPIRES_SECONDS;
+  const clamped = Math.max(1, Math.min(S3_PRESIGN_MAX_EXPIRES_SECONDS, desired));
+  return clamped;
+}
+
 /**
  * Map common MIME types to file extensions
  */
@@ -322,7 +333,7 @@ export async function generatePresignedUrl(
   senderId: string,
   mediaId: string,
   mimeType: string,
-  expiresIn: number = 3600
+  expiresIn: number = getPresignExpiresSeconds()
 ): Promise<string | null> {
   try {
     const fileExtension = getFileExtensionFromMimeType(mimeType);

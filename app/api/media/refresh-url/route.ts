@@ -20,11 +20,25 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse request body
-    const { messageId } = await request.json();
+    let messageId: string | undefined;
+    try {
+      const body = await request.json();
+      messageId = body?.messageId;
+    } catch (e) {
+      // If the client sends an empty/aborted body, request.json() throws.
+      console.error('refresh-url: invalid/empty JSON body:', e);
+      return NextResponse.json(
+        { error: 'Invalid JSON body', hint: 'Expected: { "messageId": "<id>" }' },
+        { status: 400 },
+      );
+    }
 
     // Validate required parameters
     if (!messageId) {
-      return new NextResponse('Missing required parameter: messageId', { status: 400 });
+      return NextResponse.json(
+        { error: 'Missing required parameter: messageId' },
+        { status: 400 },
+      );
     }
 
     // Get the message from database
@@ -46,7 +60,10 @@ export async function POST(request: NextRequest) {
 
     // Check if message has media data
     if (!message.media_data) {
-      return new NextResponse('Message has no media data', { status: 400 });
+      return NextResponse.json(
+        { error: 'Message has no media data' },
+        { status: 400 },
+      );
     }
 
     let mediaData;
@@ -54,12 +71,18 @@ export async function POST(request: NextRequest) {
       mediaData = JSON.parse(message.media_data);
     } catch (error) {
       console.error('Error parsing media data:', error);
-      return new NextResponse('Invalid media data', { status: 400 });
+      return NextResponse.json(
+        { error: 'Invalid media data' },
+        { status: 400 },
+      );
     }
 
     // Check that media has the required identifiers
     if (!mediaData.id || !mediaData.mime_type) {
-      return new NextResponse('Media data incomplete', { status: 400 });
+      return NextResponse.json(
+        { error: 'Media data incomplete', missing: ['id', 'mime_type'].filter((k) => !mediaData?.[k]) },
+        { status: 400 },
+      );
     }
 
     // Determine which identifier was used as the S3 owner when the media was stored
