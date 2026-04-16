@@ -1,0 +1,158 @@
+TVPLUS PANEL API
+****************************************************************
+* Ver 1.81
+* Last Update: 13/08/2024
+*****************************************************************
+How to get API KEY
+Each user on the panel will recieve his unique API KEY that is connected to his account.
+Add New
+Add new M3U
+https://tvpluspanel.net/api/api.php
+https://tvpluspanel.net/api/api.php?action=new&type=m3u&sub=12&pack=132&api_key=KEY
+Parameters:
+action = new (this device is new)
+type = m3u (device type)
+sub = 1,3,6,12,99 (Subscription length) [99 is for demo, uses 1 Demo Ticket]
+pack = package id you get from package list below OR use "all" to select ALL bouquets.
+note = add notes if needed
+api_key = Reseller API KEY from panel
+Returned value: JSON Object (category)
+[
+	{
+		"status": "true",
+		"user_id": "5000",
+		"message": "Add M3U successful",
+		"url": "http://example-tt.cc/get.php?username=username&password=password&type=m3u_plus&output=ts"
+	}
+]
+Add new MAG
+https://tvpluspanel.net/api/api.php
+https://tvpluspanel.net/api/api.php?action=new&type=mag&mac=mac&sub=12&pack=132&api_key=KEY
+Parameters:
+action = new (this device is new)
+type = mag (device type)
+mac = device MAC address
+sub = 1,3,6,12,99 (Subscription length) [99 is for demo, uses 1 Demo Ticket]
+pack = package id you get from package list below OR use "all" to select ALL bouquets.
+note = add notes if needed
+api_key = Reseller API KEY from panel
+Returned value: JSON Object (category)
+[
+	{
+		"status": "true",
+		"mac": "XX:XX:XX:XX",
+		"user_id": "5000",
+		"message": "Add MAC successful",
+		"url": "https://mag-domain.com/c/"
+	}
+]
+Add new Protocol
+https://tvpluspanel.net/api/api.php
+https://tvpluspanel.net/api/api.php?action=new&type=protocol&sub=12&pack=132&api_key=KEY
+Parameters:
+action = new (this device is new)
+type = Protocol (device type)
+sub = 1,3,6,12 (Subscription length amount)
+pack = package id you get from package list below OR use "all" to select ALL bouquets.
+api_key = Reseller API KEY from panel
+Returned value: JSON Object (category)
+[
+	{
+		"status": "true",
+		"user_id": "5000",
+		"message": "Create Protocol successful",
+		"code": "1234567890"
+	}
+]
+Renew
+Renew M3U device
+https://tvpluspanel.net/api/api.php
+https://tvpluspanel.net/api/api.php?action=renew&type=m3u&username=00AA117799&password=12345&sub=12&api_key=KEY
+Parameters:
+action = renew
+type = m3u
+username = username
+password = password
+sub = 1,3,6,12 (Subscription length amount)
+api_key = Reseller API KEY from panel
+Returned value: JSON Object (category)
+[
+    {
+        "status": "true",
+        "messasge": "M3U renew successful"
+    }
+]
+Renew MAC device
+https://tvpluspanel.net/api/api.php
+https://tvpluspanel.net/api/api.php?action=renew&type=mag&mac=mac&sub=12&api_key=KEY
+Parameters:
+action = renew
+type = mag
+mac = device MAC address
+sub = 1,3,6,12 (Subscription length amount)
+api_key = Reseller API KEY from panel
+Returned value: JSON Object (category)
+[
+    {
+        "status": "true",
+        "messasge": "MAC renew successful"
+    }
+]
+Packages
+List all custom bouquet user added in panel
+https://tvpluspanel.net/api/api.php
+https://tvpluspanel.net/api/api.php?action=bouquet&api_key=KEY
+Parameters:
+action = bouquet
+api_key = Reseller API KEY from panel
+Returned value: JSON Object (category)
+[
+    {
+        "id": "132",
+        "name": "SMALL - ARABIC"
+    },
+    {
+        "id": "152",
+        "name": "Canada without adult"
+    }
+]
+device info
+Device information
+[M3U] https://tvpluspanel.net/api/api.php?action=device_info&username=username&password=password&api_key=KEY
+[MAG] https://tvpluspanel.net/api/api.php?action=device_info&mac=mac&api_key=KEY
+Parameters:
+action = device_info
+username = username
+password = password
+mac = mac (Use MAC for MAC Devices)
+api_key = Reseller API KEY from panel
+Returned value: JSON Object (category)
+[
+    {
+        "status": "true",
+        "username": "username",
+        "password": "password",
+        "expire": "2021-10-31",
+        "country": "NL",
+        "user_id": "00000",
+        "note": "notes",
+        "url": "http://m3u-domain.com",
+        "enabled": "1"
+    }
+]
+Reseller info
+Reseller information
+https://tvpluspanel.net/api/api.php
+https://tvpluspanel.net/api/api.php?action=reseller_info&api_key=KEY
+Parameters:
+action = reseller_info
+api_key = Reseller API KEY from panel
+Returned value: JSON Object (category)
+[
+    {
+        "status": "true",
+        "username": "username",
+        "enabled": "1",
+        "credits": "50"
+    }
+]

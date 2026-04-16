@@ -85,6 +85,7 @@ export default function ChatPage() {
   const [broadcastGroupId, setBroadcastGroupId] = useState<string | null>(null);
   const [broadcastGroupName, setBroadcastGroupName] = useState<string | null>(null);
   const supabase = createClient();
+  const avatarBackfillAttemptedRef = useState(() => new Set<string>())[0];
 
   // Define handleBackToUsers early so it can be used in useEffect
   const handleBackToUsers = useCallback(() => {
@@ -177,6 +178,55 @@ export default function ChatPage() {
 
       if (data) {
         console.log(`Fetched ${data.length} user conversations`);
+        try {
+          const sample = (data as Array<Record<string, unknown>>).slice(0, 10);
+          const withAvatar = sample.filter((r) => !!r?.avatar_url).length;
+          const keys = Object.keys(sample[0] || {});
+          console.log("[avatars] contact_conversations keys:", keys);
+          console.log(
+            `[avatars] sample size=${sample.length}, withAvatar=${withAvatar}`,
+            sample.map((r) => ({
+              id: r.id,
+              display_name: r.display_name,
+              avatar_url: r.avatar_url,
+            })),
+          );
+        } catch (e) {
+          console.warn("[avatars] debug log failed:", e);
+        }
+
+        // Green API avatar backfill (best-effort): fetch avatars for missing contacts once.
+        try {
+          const rows = data as Array<{ id?: string; avatar_url?: string | null }>;
+          const missing = rows
+            .map((r) => String(r.id ?? ""))
+            .filter(Boolean)
+            .filter((id) => !avatarBackfillAttemptedRef.has(id))
+            .filter((id) => {
+              const row = rows.find((x) => String(x.id ?? "") === id);
+              return !row?.avatar_url;
+            })
+            .slice(0, 10);
+
+          if (missing.length > 0) {
+            missing.forEach((id) => avatarBackfillAttemptedRef.add(id));
+            console.log("[avatars] attempting Green avatar backfill for:", missing);
+            fetch("/api/contacts/refresh-avatars", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contactIds: missing }),
+            })
+              .then((r) => r.json().catch(() => null))
+              .then((res) => {
+                console.log("[avatars] backfill result:", res);
+                // refresh users list so avatar_url appears
+                setTimeout(fetchUsers, 1200);
+              })
+              .catch((e) => console.warn("[avatars] backfill call failed:", e));
+          }
+        } catch (e) {
+          console.warn("[avatars] backfill scheduling failed:", e);
+        }
         
         // Transform data to match ChatUser interface
         const transformedUsers: ChatUser[] = data.map(user => ({

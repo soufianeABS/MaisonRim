@@ -790,6 +790,12 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                       src={user.avatar_url}
                       alt={getDisplayName(user)}
                       referrerPolicy="no-referrer"
+                      onError={() => {
+                        console.warn("[avatar] image failed to load", {
+                          contactId: user.id,
+                          avatar_url: user.avatar_url,
+                        });
+                      }}
                     />
                   ) : null}
                   <AvatarFallback className="bg-green-100 text-green-700 font-semibold">
