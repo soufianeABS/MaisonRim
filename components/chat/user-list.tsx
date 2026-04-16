@@ -26,6 +26,12 @@ import Link from "next/link";
 import { GroupsList } from "./groups-list";
 import { GroupManagementDialog } from "./group-management-dialog";
 
+type ContactStatus = {
+  id: string;
+  name: string;
+  color: string;
+};
+
 interface ChatUser {
   id: string;
   name: string;
@@ -68,6 +74,8 @@ interface NewUserInput {
 
 export function UserList({ users, selectedUser, onUserSelect, currentUserId, onUsersUpdate, onBroadcastToGroup }: UserListProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [statuses, setStatuses] = useState<ContactStatus[]>([]);
+  const [selectedStatusId, setSelectedStatusId] = useState<string | null>(null);
   const [showNewChat, setShowNewChat] = useState(false);
   const [newUsers, setNewUsers] = useState<NewUserInput[]>([
     { id: '1', phoneNumber: '', customName: '' }
@@ -88,6 +96,22 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
   // Load groups on component mount
   useEffect(() => {
     loadGroups();
+  }, []);
+
+  // Load statuses (tags) on component mount
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch("/api/contact-statuses", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to load statuses");
+        setStatuses(Array.isArray(data?.statuses) ? data.statuses : []);
+      } catch (e) {
+        console.error("Error loading statuses:", e);
+        setStatuses([]);
+      }
+    };
+    void load();
   }, []);
 
   const loadGroups = async () => {
@@ -189,7 +213,9 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
   const filteredUsers = sortedUsers.filter(user => {
     const displayName = getDisplayName(user);
     const searchableText = `${displayName} ${user.whatsapp_name || ''} ${user.id}`.toLowerCase();
-    return searchableText.includes(searchTerm.toLowerCase());
+    const matchesSearch = searchableText.includes(searchTerm.toLowerCase());
+    const matchesStatus = selectedStatusId ? user.status_id === selectedStatusId : true;
+    return matchesSearch && matchesStatus;
   });
 
   const handleLogout = async () => {
@@ -604,6 +630,53 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
           </div>
         </div>
       )}
+
+      {/* Tags (Statuses) */}
+      <div className="px-4 pt-4 pb-2 border-b border-border">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium text-muted-foreground">Tags</span>
+          {selectedStatusId ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setSelectedStatusId(null)}
+              title="Clear tag filter"
+            >
+              Clear
+            </Button>
+          ) : null}
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <Button
+            type="button"
+            variant={selectedStatusId === null ? "default" : "outline"}
+            size="sm"
+            className="h-8 shrink-0 rounded-full px-3 text-xs"
+            onClick={() => setSelectedStatusId(null)}
+          >
+            All
+          </Button>
+          {statuses.map((s) => (
+            <Button
+              key={s.id}
+              type="button"
+              variant={selectedStatusId === s.id ? "default" : "outline"}
+              size="sm"
+              className="h-8 shrink-0 rounded-full px-3 text-xs gap-2"
+              onClick={() => setSelectedStatusId((prev) => (prev === s.id ? null : s.id))}
+              title={s.name}
+            >
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: s.color }}
+              />
+              <span className="max-w-[160px] truncate">{s.name}</span>
+            </Button>
+          ))}
+        </div>
+      </div>
 
       {/* Search */}
       <div className="p-4 border-b border-border">

@@ -44,6 +44,44 @@ export async function POST(request: NextRequest) {
   }
 }
 
+async function getDefaultStatusId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ownerId: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("user_settings")
+    .select("default_contact_status_id")
+    .eq("id", ownerId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Could not load default status id:", error);
+    return null;
+  }
+  return (data as { default_contact_status_id?: string | null } | null)
+    ?.default_contact_status_id ?? null;
+}
+
+async function tryAssignDefaultStatus(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ownerId: string,
+  contactId: string,
+  statusId: string | null,
+) {
+  if (!statusId) return;
+  const { error } = await supabase.from("contact_status_assignments").upsert(
+    {
+      owner_id: ownerId,
+      contact_id: contactId,
+      status_id: statusId,
+    },
+    { onConflict: "owner_id,contact_id" },
+  );
+  if (error) {
+    console.warn("Could not assign default status:", error);
+  }
+}
+
 /**
  * Handle single user creation
  */
@@ -93,6 +131,7 @@ async function handleSingleUserCreation(
   console.log(`Creating/getting chat with ${cleanPhoneNumber}, custom name: "${customName}"`);
 
   const now = new Date().toISOString();
+  const defaultStatusId = await getDefaultStatusId(supabase, user.id);
   const { data: contact, error } = await supabase
     .from('contacts')
     .upsert(
@@ -116,6 +155,9 @@ async function handleSingleUserCreation(
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
+
+  // Assign default status (best-effort)
+  await tryAssignDefaultStatus(supabase, user.id, contact.phone, defaultStatusId);
 
   return NextResponse.json({
     success: true,
@@ -169,6 +211,7 @@ async function handleBulkUserCreation(
   };
 
   const userIdWithoutPlus = user.id.replace(/^\+/, '');
+  const defaultStatusId = await getDefaultStatusId(supabase, user.id);
 
   // Process each user
   for (const userInput of users) {
@@ -249,6 +292,9 @@ async function handleBulkUserCreation(
         results.failedCount++;
         continue;
       }
+
+      // Assign default status (best-effort)
+      await tryAssignDefaultStatus(supabase, user.id, contact.phone, defaultStatusId);
 
       results.success.push({
         phoneNumber,

@@ -50,6 +50,7 @@ const emptyForm = {
 
 export default function StatusesPage() {
   const [statuses, setStatuses] = useState<ContactStatus[]>([]);
+  const [defaultStatusId, setDefaultStatusId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -68,6 +69,12 @@ export default function StatusesPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load statuses");
       setStatuses(data.statuses ?? []);
+
+      const defRes = await fetch("/api/contact-statuses/default", { cache: "no-store" });
+      const defData = await defRes.json();
+      if (defRes.ok) {
+        setDefaultStatusId(defData?.default_status_id ?? null);
+      }
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to load statuses");
     } finally {
@@ -162,10 +169,31 @@ export default function StatusesPage() {
       const res = await fetch(`/api/contact-statuses/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to delete");
+      if (defaultStatusId === id) {
+        setDefaultStatusId(null);
+      }
       if (editingId === id) cancelEdit();
       await loadStatuses();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Delete failed");
+    }
+  };
+
+  const setDefaultStatus = async (id: string | null) => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/contact-statuses/default", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ default_status_id: id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to set default");
+      setDefaultStatusId(data?.default_status_id ?? null);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not set default");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -191,6 +219,37 @@ export default function StatusesPage() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Default tag</CardTitle>
+            <CardDescription>
+              This tag is automatically assigned to a client when you create a new chat/contact.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm">
+              {defaultStatusId ? (
+                <span className="text-foreground">
+                  Current default:{" "}
+                  <span className="font-medium">
+                    {statuses.find((s) => s.id === defaultStatusId)?.name ?? "Unknown"}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-muted-foreground">No default tag selected.</span>
+              )}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void setDefaultStatus(null)}
+              disabled={saving || !defaultStatusId}
+            >
+              Clear default
+            </Button>
+          </CardContent>
+        </Card>
+
         {suggestedMissing.length > 0 ? (
           <Card>
             <CardHeader>
@@ -302,8 +361,26 @@ export default function StatusesPage() {
                           style={{ backgroundColor: s.color }}
                         />
                         {s.name}
+                        {defaultStatusId === s.id ? (
+                          <span className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground">
+                            Default
+                          </span>
+                        ) : null}
                       </CardTitle>
                       <div className="flex gap-1 shrink-0">
+                        {defaultStatusId !== s.id ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8"
+                            disabled={saving}
+                            onClick={() => void setDefaultStatus(s.id)}
+                            title="Set as default tag for new clients"
+                          >
+                            Set default
+                          </Button>
+                        ) : null}
                         {editingId === s.id ? (
                           <Button
                             type="button"
