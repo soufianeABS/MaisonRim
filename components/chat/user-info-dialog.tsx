@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { X, Edit3, Check, Phone, MessageCircle, Clock, User, Tag } from "lucide-react";
@@ -20,6 +20,7 @@ interface ChatUser {
   name: string;
   custom_name?: string;
   whatsapp_name?: string;
+  avatar_url?: string | null;
   last_active: string;
   unread_count?: number;
   last_message_time?: string;
@@ -223,6 +224,13 @@ export function UserInfoDialog({
             {/* Avatar and Name Section */}
             <div className="flex flex-col items-center text-center space-y-4">
               <Avatar className="h-24 w-24">
+                {user.avatar_url ? (
+                  <AvatarImage
+                    src={user.avatar_url}
+                    alt={getDisplayName()}
+                    referrerPolicy="no-referrer"
+                  />
+                ) : null}
                 <AvatarFallback className="bg-green-100 text-green-700 font-semibold text-2xl">
                   {getDisplayName().charAt(0).toUpperCase()}
                 </AvatarFallback>

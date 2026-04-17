@@ -218,18 +218,20 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
     return `${prefix}${message.length > 30 ? message.substring(0, 30) + "..." : message}`;
   };
 
-  // Sort users by last message time (most recent first) and then by unread count
+  // Sort conversations newest-first (stable when opening/marking read)
   const sortedUsers = users
     .filter(user => user.id !== currentUserId)
     .sort((a, b) => {
-      // First, prioritize users with unread messages
-      if ((a.unread_count || 0) > 0 && (b.unread_count || 0) === 0) return -1;
-      if ((a.unread_count || 0) === 0 && (b.unread_count || 0) > 0) return 1;
-      
-      // Then sort by last message time
+      // Sort by last message time (or last active as fallback)
       const aTime = new Date(a.last_message_time || a.last_active).getTime();
       const bTime = new Date(b.last_message_time || b.last_active).getTime();
-      return bTime - aTime;
+      if (bTime !== aTime) return bTime - aTime;
+
+      // Stable tie-breakers
+      const aUnread = a.unread_count || 0;
+      const bUnread = b.unread_count || 0;
+      if (bUnread !== aUnread) return bUnread - aUnread;
+      return String(a.id).localeCompare(String(b.id));
     });
 
   const filteredUsers = sortedUsers.filter(user => {

@@ -46,6 +46,10 @@ function extractPhoneFromChatId(chatId: string): string {
   return digitsOnly(chatId.split('@')[0] || chatId);
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
@@ -143,22 +147,63 @@ export async function POST(
       }
 
       const getMessageEndpoint = `${apiUrl.replace(/\/+$/, "")}/waInstance${idInstance}/getMessage/${apiTokenInstance}`;
-      const resp = await fetch(getMessageEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatId, idMessage }),
-      });
-      const data = await resp.json().catch(async () => {
-        const txt = await resp.text().catch(() => "");
-        return { raw: txt };
-      });
+      let data: unknown = null;
+      let hydratedFrom: "getMessage" | "getChatHistory" | null = null;
 
-      if (!resp.ok || !data || typeof data !== "object") {
-        console.warn("Green webhook: getMessage failed for outgoingMessageStatus", {
+      // Green journal can lag. Retry a couple times before giving up.
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const resp = await fetch(getMessageEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId, idMessage }),
+        });
+        const payload = await resp.json().catch(async () => {
+          const txt = await resp.text().catch(() => "");
+          return { raw: txt };
+        });
+        if (resp.ok && payload && typeof payload === "object") {
+          data = payload;
+          hydratedFrom = "getMessage";
+          break;
+        }
+        console.warn("Green webhook: getMessage not ready yet", {
           chatId,
           idMessage,
+          attempt,
           status: resp.status,
-          details: data,
+        });
+        await sleep(350 * attempt);
+      }
+
+      // Fallback: pull recent history and find the message id
+      if (!hydratedFrom) {
+        const historyEndpoint = `${apiUrl.replace(/\/+$/, "")}/waInstance${idInstance}/getChatHistory/${apiTokenInstance}`;
+        const resp = await fetch(historyEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId, count: 50 }),
+        });
+        const payload = await resp.json().catch(async () => {
+          const txt = await resp.text().catch(() => "");
+          return { raw: txt };
+        });
+        if (resp.ok && Array.isArray(payload)) {
+          const found = (payload as Array<Record<string, unknown>>).find(
+            (m) => String(m?.idMessage ?? "") === idMessage,
+          );
+          if (found) {
+            data = found;
+            hydratedFrom = "getChatHistory";
+          }
+        }
+      }
+
+      if (!hydratedFrom || !data || typeof data !== "object") {
+        console.warn("Green webhook: could not hydrate message for outgoingMessageStatus", {
+          chatId,
+          idMessage,
+          status: body.status,
+          sendByApi: body.sendByApi,
         });
         return new NextResponse("OK", { status: 200 });
       }
@@ -204,6 +249,7 @@ export async function POST(
         typeMessage,
         sendByApi: body.sendByApi,
         status: body.status,
+        hydratedFrom,
       });
     }
 
