@@ -710,7 +710,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
             </Button>
           ) : null}
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
           <Button
             type="button"
             variant={selectedStatusId === null ? "default" : "outline"}
@@ -905,7 +905,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                           <DropdownMenuTrigger asChild>
                             <button
                               type="button"
-                              className={`hidden sm:inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium text-foreground/90 hover:bg-muted/60 transition-colors ${
+                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium text-foreground/90 hover:bg-muted/60 transition-colors ${
                                 isUpdating ? "opacity-60" : ""
                               }`}
                               title={statusName ? `Status: ${statusName}` : "Set tag"}
