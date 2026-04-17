@@ -941,7 +941,7 @@ export function ChatWindow({
       }
     }
 
-    const baseClasses = `max-w-[85%] px-4 py-3 rounded-2xl shadow-sm ${
+    const baseClasses = `max-w-[85%] min-w-0 px-4 py-3 rounded-2xl shadow-sm ${
       isOwn
         ? 'bg-green-500 text-white ml-4'
         : 'bg-white dark:bg-muted border border-border mr-4'
@@ -1023,7 +1023,7 @@ export function ChatWindow({
               </div>
             )}
             {mediaData?.caption && (
-              <p className="text-sm whitespace-pre-wrap break-words mb-2">
+              <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] mb-2">
                 {mediaData.caption}
               </p>
             )}
@@ -1036,7 +1036,7 @@ export function ChatWindow({
       case 'document':
         return (
           <div className={baseClasses}>
-            <div className="flex items-center gap-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl mb-2 min-w-[280px] max-w-[400px]">
+            <div className="flex items-center gap-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl mb-2 min-w-0 w-full max-w-full sm:min-w-[280px] sm:max-w-[400px]">
               <div className={`p-3 rounded-full ${isOwn ? 'bg-green-600' : 'bg-blue-500'}`}>
                 <FileText className="h-6 w-6 text-white" />
               </div>
@@ -1091,7 +1091,7 @@ export function ChatWindow({
         
         return (
           <div className={baseClasses}>
-            <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl mb-2 min-w-[300px] max-w-[400px]">
+            <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl mb-2 min-w-0 w-full max-w-full sm:min-w-[300px] sm:max-w-[400px]">
               <Button
                 size="sm"
                 variant="ghost"
@@ -1217,7 +1217,7 @@ export function ChatWindow({
               </div>
             )}
             {mediaData?.caption && (
-              <p className="text-sm whitespace-pre-wrap break-words mb-2">
+              <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] mb-2">
                 {mediaData.caption}
               </p>
             )}
@@ -1281,7 +1281,7 @@ export function ChatWindow({
               {/* Body Component */}
               {mediaData?.body && (
                 <div>
-                  <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+                  <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] leading-relaxed">
                     {mediaData.body.text || message.content}
                   </p>
                 </div>
@@ -1289,7 +1289,7 @@ export function ChatWindow({
 
               {/* If no structured data, show the processed content */}
               {!mediaData?.body && !mediaData?.header && (
-                <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+                <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] leading-relaxed">
                   {message.content}
                 </p>
               )}
@@ -1384,7 +1384,7 @@ export function ChatWindow({
         
         return (
           <div className={`${baseClasses} ${isOptimistic ? 'opacity-70' : ''} transition-opacity duration-300`}>
-            <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+            <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] leading-relaxed">
               {message.content}
             </p>
             <div className="flex items-center gap-2 mt-2">

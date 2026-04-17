@@ -19,6 +19,7 @@ import {
   Sparkles,
   Tag,
   Zap,
+  Wrench,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -519,46 +520,46 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
             >
               <Users className="h-5 w-5" />
             </Button>
-            <Link href="/protected/templates">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
-                title="Message Templates"
-              >
-                <FileText className="h-5 w-5" />
-              </Button>
-            </Link>
-            <Link href="/protected/reply-agents">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
-                title="Reply agents (AI suggest reply)"
-              >
-                <Sparkles className="h-5 w-5" />
-              </Button>
-            </Link>
-            <Link href="/protected/statuses">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
-                title="Statuses"
-              >
-                <Tag className="h-5 w-5" />
-              </Button>
-            </Link>
-            <Link href="/protected/actions">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
-                title="Dynamic actions"
-              >
-                <Zap className="h-5 w-5" />
-              </Button>
-            </Link>
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
+                  title="Tools"
+                >
+                  <Wrench className="h-5 w-5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Tools</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/protected/templates" className="flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Message Templates
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/protected/reply-agents" className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4" />
+                    Reply Agents
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/protected/statuses" className="flex items-center gap-2">
+                    <Tag className="h-4 w-4" />
+                    Statuses
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/protected/actions" className="flex items-center gap-2">
+                    <Zap className="h-4 w-4" />
+                    Dynamic Actions
+                  </Link>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Link href="/protected/setup">
               <Button
                 variant="ghost"
