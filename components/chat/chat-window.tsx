@@ -2,7 +2,6 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2 } from "lucide-react";
@@ -172,7 +171,7 @@ export function ChatWindow({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const unreadIndicatorRef = useRef<HTMLDivElement>(null);
-  const messageInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
 
   useEffect(() => {
@@ -541,17 +540,52 @@ export function ChatWindow({
     }
   }, [selectedUser]);
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    // Allow sending if either individual user or broadcast group is selected
-    if (messageInput.trim() && (selectedUser || broadcastGroupName) && !isLoading) {
-      onSendMessage(messageInput.trim());
-      setMessageInput("");
-      // Keep focus in the input so the user can type the next message immediately
-      requestAnimationFrame(() => {
-        messageInputRef.current?.focus();
-      });
+  const adjustMessageInputHeight = useCallback(() => {
+    const el = messageInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, []);
+
+  useEffect(() => {
+    adjustMessageInputHeight();
+  }, [messageInput, adjustMessageInputHeight]);
+
+  const commitSend = useCallback(() => {
+    if (
+      !messageInput.trim() ||
+      (!selectedUser && !broadcastGroupName) ||
+      isLoading ||
+      sendingMedia
+    ) {
+      return;
     }
+    onSendMessage(messageInput.trim());
+    setMessageInput("");
+    requestAnimationFrame(() => {
+      messageInputRef.current?.focus();
+      adjustMessageInputHeight();
+    });
+  }, [
+    messageInput,
+    selectedUser,
+    broadcastGroupName,
+    isLoading,
+    sendingMedia,
+    onSendMessage,
+    adjustMessageInputHeight,
+  ]);
+
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    commitSend();
+  };
+
+  const handleMessageInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    if (e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    commitSend();
   };
 
   const loadReplyAgents = useCallback(async () => {
@@ -1910,10 +1944,11 @@ export function ChatWindow({
           >
             <MessageSquare className="h-5 w-5" />
           </Button>
-          <Input
+          <Textarea
             ref={messageInputRef}
             value={messageInput}
             onChange={(e) => setMessageInput(e.target.value)}
+            onKeyDown={handleMessageInputKeyDown}
             placeholder={
               isLoading || sendingMedia 
                 ? "Sending..." 
@@ -1921,7 +1956,9 @@ export function ChatWindow({
                   ? "Type broadcast message..." 
                   : "Type a message..."
             }
-            className="flex-1 border-border focus:ring-emerald-500 rounded-full px-4 py-2"
+            title="Enter to send · Shift+Enter for a new line"
+            rows={1}
+            className="flex-1 min-h-[42px] max-h-[160px] resize-none overflow-y-auto rounded-2xl border-border px-4 py-2.5 focus-visible:ring-emerald-500"
             maxLength={1000}
             disabled={isLoading || sendingMedia}
             autoFocus
