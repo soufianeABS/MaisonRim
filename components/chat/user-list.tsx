@@ -901,7 +901,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                       const isUpdating = updatingStatusFor.has(user.id);
 
                       return (
-                        <DropdownMenu>
+                        <DropdownMenu modal={false}>
                           <DropdownMenuTrigger asChild>
                             <button
                               type="button"
