@@ -72,7 +72,7 @@ export async function POST(
 
     const { data: userSettings, error: settingsError } = await supabase
       .from('user_settings')
-      .select('id, messaging_provider, green_api_url, green_id_instance, green_api_token_instance')
+      .select('id, messaging_provider, green_api_url, green_id_instance, green_api_token_instance, default_contact_status_id')
       .eq('webhook_token', token)
       .single();
 
@@ -98,10 +98,16 @@ export async function POST(
     }
     const body = (await request.json()) as GreenIncomingMessageWebhook;
 
-    const isIncoming = body?.typeWebhook === 'incomingMessageReceived';
-    const isOutgoingFromPhone = body?.typeWebhook === 'outgoingMessageReceived';
-    if (!isIncoming && !isOutgoingFromPhone) {
-      console.log('Green webhook: ignored type', { typeWebhook: body?.typeWebhook });
+    const typeWebhook = body?.typeWebhook;
+    const isIncoming = typeWebhook === 'incomingMessageReceived';
+    const isOutgoingFromPhone = typeWebhook === 'outgoingMessageReceived';
+    const isOutgoingFromApi = typeWebhook === 'outgoingAPIMessageReceived';
+    if (!isIncoming && !isOutgoingFromPhone && !isOutgoingFromApi) {
+      console.log('Green webhook: ignored type', {
+        typeWebhook,
+        hasSenderData: !!body?.senderData,
+        hasMessageData: !!body?.messageData,
+      });
       return new NextResponse('OK', { status: 200 });
     }
 
@@ -184,6 +190,23 @@ export async function POST(
         ],
         { onConflict: 'owner_id,phone' },
       );
+
+      // Assign default tag on first contact creation (best-effort, do not override existing)
+      const defaultStatusId =
+        (userSettings as { default_contact_status_id?: string | null })
+          .default_contact_status_id ?? null;
+      if (defaultStatusId) {
+        await supabase.from("contact_status_assignments").upsert(
+          [
+            {
+              owner_id: businessOwnerId,
+              contact_id: phoneNumber,
+              status_id: defaultStatusId,
+            },
+          ],
+          { onConflict: "owner_id,contact_id", ignoreDuplicates: true },
+        );
+      }
     } catch {
       // ignore
     }
@@ -243,34 +266,55 @@ export async function POST(
       }
     }
 
-    // Store message
-    await supabase.from('messages').insert([
-      {
+    // Store message (upsert to handle retries/duplicates cleanly)
+    const isSentByMe = isOutgoingFromPhone || isOutgoingFromApi;
+    const { error: msgErr } = await supabase.from('messages').upsert(
+      [
+        {
+          id,
+          sender_id: phoneNumber,
+          receiver_id: businessOwnerId,
+          content,
+          timestamp: messageTimestamp,
+          is_sent_by_me: isSentByMe,
+          is_read: isSentByMe, // outgoing messages are already "read" by the sender
+          message_type: mappedType,
+          media_data: JSON.stringify({
+            provider: 'green_api',
+            typeWebhook,
+            ...(isMedia
+              ? {
+                  type: mappedType,
+                  mime_type: mediaMimeType,
+                  filename: mediaFilename,
+                  caption: mediaCaption,
+                  media_url: mediaUrl,
+                  s3_uploaded: s3Uploaded,
+                  green_download_url: fileData?.downloadUrl || null,
+                }
+              : {}),
+          }),
+        },
+      ],
+      { onConflict: 'id', ignoreDuplicates: true },
+    );
+    if (msgErr) {
+      console.warn('Green webhook: failed to store message', {
         id,
-        sender_id: phoneNumber,
-        receiver_id: businessOwnerId,
-        content,
-        timestamp: messageTimestamp,
-        is_sent_by_me: isOutgoingFromPhone,
-        is_read: isOutgoingFromPhone, // outgoing messages are already "read" by the sender
-        message_type: mappedType,
-        media_data: JSON.stringify({
-          provider: 'green_api',
-          typeWebhook: body.typeWebhook,
-          ...(isMedia
-            ? {
-                type: mappedType,
-                mime_type: mediaMimeType,
-                filename: mediaFilename,
-                caption: mediaCaption,
-                media_url: mediaUrl,
-                s3_uploaded: s3Uploaded,
-                green_download_url: fileData?.downloadUrl || null,
-              }
-            : {}),
-        }),
-      },
-    ]);
+        typeWebhook,
+        mappedType,
+        error: msgErr.message,
+      });
+    } else {
+      console.log('Green webhook: stored message', {
+        id,
+        typeWebhook,
+        mappedType,
+        chatId,
+        phoneNumber,
+        isSentByMe,
+      });
+    }
 
     return new NextResponse('OK', { status: 200 });
   } catch (error) {

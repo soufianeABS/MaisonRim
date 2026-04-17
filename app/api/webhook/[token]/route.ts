@@ -261,7 +261,7 @@ export async function POST(
     // Find user by webhook token
     const { data: userSettings, error: settingsError } = await supabase
       .from('user_settings')
-      .select('id, access_token, api_version, phone_number_id, messaging_provider')
+      .select('id, access_token, api_version, phone_number_id, messaging_provider, default_contact_status_id')
       .eq('webhook_token', webhookToken)
       .single();
 
@@ -386,6 +386,23 @@ export async function POST(
           ],
           { onConflict: 'owner_id,phone' },
         );
+
+        // Assign default tag on first contact creation (best-effort, do not override existing)
+        const defaultStatusId =
+          (userSettings as { default_contact_status_id?: string | null })
+            .default_contact_status_id ?? null;
+        if (defaultStatusId) {
+          await supabase.from("contact_status_assignments").upsert(
+            [
+              {
+                owner_id: businessOwnerId,
+                contact_id: phoneNumber,
+                status_id: defaultStatusId,
+              },
+            ],
+            { onConflict: "owner_id,contact_id", ignoreDuplicates: true },
+          );
+        }
       } catch (e) {
         console.error('Error upserting contact:', e);
       }

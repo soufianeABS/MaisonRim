@@ -20,6 +20,7 @@ import {
   Tag,
   Zap,
   Wrench,
+  RefreshCw,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -98,6 +99,13 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
   const [editingName, setEditingName] = useState("");
   const [isCreatingChat, setIsCreatingChat] = useState(false);
   const [isUpdatingName, setIsUpdatingName] = useState(false);
+  const [syncingGreenHistory, setSyncingGreenHistory] = useState(false);
+  const [syncGreenConfirmOpen, setSyncGreenConfirmOpen] = useState(false);
+  const [syncGreenResult, setSyncGreenResult] = useState<
+    | null
+    | { ok: true; chatsProcessed: number; messagesUpserted: number; mediaStored: number }
+    | { ok: false; error: string }
+  >(null);
   
   // Groups state
   const [groups, setGroups] = useState<Group[]>([]);
@@ -268,6 +276,33 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
         next.delete(contactId);
         return next;
       });
+    }
+  };
+
+  const runSyncGreenHistory = async () => {
+    if (syncingGreenHistory) return;
+    setSyncGreenResult(null);
+    setSyncingGreenHistory(true);
+    try {
+      const resp = await fetch("/api/green/sync-history", { method: "POST" });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(data?.error || "Failed to sync history");
+      }
+      await onUsersUpdate?.();
+      setSyncGreenResult({
+        ok: true,
+        chatsProcessed: Number(data?.chatsProcessed ?? 0),
+        messagesUpserted: Number(data?.messagesUpserted ?? 0),
+        mediaStored: Number(data?.mediaStored ?? 0),
+      });
+    } catch (e) {
+      setSyncGreenResult({
+        ok: false,
+        error: e instanceof Error ? e.message : "Failed to sync history",
+      });
+    } finally {
+      setSyncingGreenHistory(false);
     }
   };
 
@@ -494,6 +529,75 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
 
   return (
     <div className="h-full flex flex-col bg-background">
+      {syncGreenConfirmOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sync-green-title"
+          onClick={() => {
+            if (syncingGreenHistory) return;
+            setSyncGreenConfirmOpen(false);
+            setSyncGreenResult(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border bg-background p-6 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start gap-3">
+              <RefreshCw className={`h-6 w-6 shrink-0 ${syncingGreenHistory ? "animate-spin" : ""}`} />
+              <div className="min-w-0">
+                <h2 id="sync-green-title" className="text-lg font-semibold">
+                  Sync history (Green API)
+                </h2>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  This will import as many chats/messages as possible and store messages + media in your database/storage.
+                  Depending on your account size, it may take a while.
+                </p>
+              </div>
+            </div>
+
+            {syncGreenResult?.ok === true && (
+              <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-900 dark:bg-green-950/20 dark:text-green-200">
+                <div className="font-medium">Sync complete</div>
+                <div className="mt-1 text-xs">
+                  Chats processed: {syncGreenResult.chatsProcessed} · Messages upserted: {syncGreenResult.messagesUpserted} · Media stored: {syncGreenResult.mediaStored}
+                </div>
+              </div>
+            )}
+
+            {syncGreenResult?.ok === false && (
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/20 dark:text-red-200">
+                <div className="font-medium">Sync failed</div>
+                <div className="mt-1 text-xs break-words">{syncGreenResult.error}</div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={syncingGreenHistory}
+                onClick={() => {
+                  setSyncGreenConfirmOpen(false);
+                  setSyncGreenResult(null);
+                }}
+              >
+                {syncGreenResult?.ok === true ? "Close" : "Cancel"}
+              </Button>
+              <Button
+                type="button"
+                className="bg-green-600 hover:bg-green-700 text-white"
+                disabled={syncingGreenHistory || syncGreenResult?.ok === true}
+                onClick={() => void runSyncGreenHistory()}
+              >
+                {syncingGreenHistory ? "Syncing…" : "Sync now"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="p-4 border-b border-border bg-green-600 text-white">
         <div className="flex items-center justify-between">
@@ -527,12 +631,24 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                   size="sm"
                   className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
                   title="Tools"
+                  disabled={syncingGreenHistory}
                 >
                   <Wrench className="h-5 w-5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>Tools</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setSyncGreenConfirmOpen(true);
+                  }}
+                  disabled={syncingGreenHistory}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  {syncingGreenHistory ? "Syncing Green history…" : "Sync history (Green API)"}
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
                   <Link href="/protected/templates" className="flex items-center gap-2">
