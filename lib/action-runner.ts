@@ -1,6 +1,7 @@
 import { JSONPath } from "jsonpath-plus";
 
 import { createClient } from "@/lib/supabase/server";
+import { fetchWithServerProxy, isLikelyCloudflareChallenge } from "@/lib/server-proxy-fetch";
 
 type HttpMethod = "GET" | "POST";
 
@@ -21,6 +22,8 @@ type ApiActionRow = {
   method: HttpMethod;
   payload_template: unknown;
   response_map: unknown;
+  /** When absent (old row), treated as false. */
+  use_server_proxy?: boolean | null;
 };
 
 type ContactRow = {
@@ -128,7 +131,7 @@ export class ActionRunner {
     if (statusId) {
       const { data } = await supabase
         .from("api_actions")
-        .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map")
+        .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, use_server_proxy")
         .eq("owner_id", user.id)
         .eq("status_id", statusId)
         .maybeSingle();
@@ -137,7 +140,7 @@ export class ActionRunner {
     if (!action && tagName) {
       const { data } = await supabase
         .from("api_actions")
-        .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map")
+        .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, use_server_proxy")
         .eq("owner_id", user.id)
         .ilike("tag_name", tagName)
         .maybeSingle();
@@ -171,6 +174,7 @@ export class ActionRunner {
     }
 
     const payload = deepReplacePlaceholders(action.payload_template, ctx);
+    const useProxy = action.use_server_proxy === true;
 
     let responseJson: unknown;
     try {
@@ -190,10 +194,20 @@ export class ActionRunner {
           }
           finalUrl = u.toString();
           requestPayload = payload;
+          if (useProxy) {
+            return await fetchWithServerProxy({ url: finalUrl, method: "GET" });
+          }
           return await fetch(finalUrl, { method: "GET" });
         }
         finalUrl = action.url;
         requestPayload = payload ?? {};
+        if (useProxy) {
+          return await fetchWithServerProxy({
+            url: action.url,
+            method: "POST",
+            jsonBody: payload ?? {},
+          });
+        }
         return await fetch(action.url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -202,6 +216,28 @@ export class ActionRunner {
       })();
 
       const text = await res.text();
+      // Do not treat our own /api/iptv (Puppeteer) response as a Cloudflare challenge page.
+      const isIptvStealthRoute = (() => {
+        try {
+          const u = new URL(finalUrl);
+          return u.pathname === "/api/iptv" || u.pathname.endsWith("/api/iptv");
+        } catch {
+          return false;
+        }
+      })();
+      if (useProxy && !isIptvStealthRoute && isLikelyCloudflareChallenge(text)) {
+        await logActionError({
+          ownerId: user.id,
+          contactId,
+          actionId: action.id,
+          tagName: tagName || action.tag_name,
+          message: "Cloudflare challenge page returned (server proxy)",
+          details: { url: action.url, finalUrl, method },
+        });
+        throw new Error(
+          "Cloudflare block detected. Server-side browser headers were not enough; try a different endpoint or tooling.",
+        );
+      }
       try {
         responseJson = text ? JSON.parse(text) : null;
       } catch {

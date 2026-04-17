@@ -6,6 +6,7 @@ import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,6 +21,7 @@ type ApiAction = {
   method: "GET" | "POST";
   payload_template: unknown;
   response_map: unknown;
+  use_server_proxy?: boolean;
   updated_at: string;
 };
 
@@ -28,6 +30,17 @@ function pretty(v: unknown): string {
     return JSON.stringify(v ?? {}, null, 2);
   } catch {
     return "{}";
+  }
+}
+
+/** Empty or whitespace-only textarea is treated as `{}` (valid for GET with no extra query params). */
+function parseJsonField(raw: string, fieldLabel: string): unknown {
+  const t = raw.trim();
+  if (t === "") return {};
+  try {
+    return JSON.parse(t);
+  } catch {
+    throw new Error(`${fieldLabel} must be valid JSON`);
   }
 }
 
@@ -42,6 +55,7 @@ export default function ActionsPage() {
   const [method, setMethod] = useState<"GET" | "POST">("POST");
   const [payloadTemplate, setPayloadTemplate] = useState(pretty({ conversationId: "{{conversationId}}" }));
   const [responseMap, setResponseMap] = useState(pretty({ "metadata.remote_url": "$.url" }));
+  const [useServerProxy, setUseServerProxy] = useState(false);
 
   const actionByStatus = useMemo(() => {
     const map = new Map<string, ApiAction>();
@@ -76,20 +90,8 @@ export default function ActionsPage() {
   const upsertForStatus = async () => {
     if (!selectedStatusId) throw new Error("Pick a tag");
     const existing = actionByStatus.get(selectedStatusId) ?? null;
-    const payload = (() => {
-      try {
-        return JSON.parse(payloadTemplate);
-      } catch {
-        throw new Error("payload_template must be valid JSON");
-      }
-    })();
-    const map = (() => {
-      try {
-        return JSON.parse(responseMap);
-      } catch {
-        throw new Error("response_map must be valid JSON");
-      }
-    })();
+    const payload = parseJsonField(payloadTemplate, "payload_template");
+    const map = parseJsonField(responseMap, "response_map");
 
     const body = {
       status_id: selectedStatusId,
@@ -98,6 +100,7 @@ export default function ActionsPage() {
       method,
       payload_template: payload,
       response_map: map,
+      use_server_proxy: useServerProxy,
     };
     if (!body.url) throw new Error("URL is required");
 
@@ -148,11 +151,13 @@ export default function ActionsPage() {
       setMethod(existing.method ?? "POST");
       setPayloadTemplate(pretty(existing.payload_template));
       setResponseMap(pretty(existing.response_map));
+      setUseServerProxy(Boolean(existing.use_server_proxy));
     } else {
       setUrl("");
       setMethod("POST");
       setPayloadTemplate(pretty({ conversationId: "{{conversationId}}" }));
       setResponseMap(pretty({ "metadata.remote_url": "$.url" }));
+      setUseServerProxy(false);
     }
   };
 
@@ -230,6 +235,22 @@ export default function ActionsPage() {
                         Save mapping
                       </Button>
                     </div>
+                    <div className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-3">
+                      <Checkbox
+                        id="act-proxy"
+                        checked={useServerProxy}
+                        onCheckedChange={(v) => setUseServerProxy(v === true)}
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="act-proxy" className="cursor-pointer font-medium leading-none">
+                          Fetch via server proxy (browser-like headers)
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Runs the request from this app with browser User-Agent and related headers. Useful when the API blocks non-browser clients.
+                          Does not bypass interactive Cloudflare challenges.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -237,6 +258,15 @@ export default function ActionsPage() {
                   <div className="space-y-2">
                     <Label htmlFor="act-payload">payload_template (JSON)</Label>
                     <Textarea id="act-payload" value={payloadTemplate} onChange={(e) => setPayloadTemplate(e.target.value)} rows={12} className="font-mono text-xs" />
+                    <p className="text-xs text-muted-foreground">
+                      {method === "GET" ? (
+                        <>
+                          For GET, each key becomes a query parameter on the URL. Leave empty or use <code>{"{}"}</code> if you do not need placeholders beyond what is already in the URL.
+                        </>
+                      ) : (
+                        <>Sent as the JSON body. Empty field is saved as <code>{"{}"}</code>.</>
+                      )}
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="act-map">response_map (JSON)</Label>
@@ -273,6 +303,11 @@ export default function ActionsPage() {
                               <span className="text-sm font-medium">{a.tag_name || "Tag"}</span>
                             )}
                             <span className="text-xs text-muted-foreground">{a.method}</span>
+                            {a.use_server_proxy ? (
+                              <span className="text-[10px] rounded border border-border px-1.5 py-0.5 text-muted-foreground">
+                                server proxy
+                              </span>
+                            ) : null}
                           </div>
                           <p className="text-xs text-muted-foreground truncate">{a.url}</p>
                         </div>

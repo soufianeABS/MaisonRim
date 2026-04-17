@@ -6,6 +6,10 @@ function cleanMethod(v: unknown): "GET" | "POST" {
   return v === "GET" ? "GET" : "POST";
 }
 
+function cleanUseServerProxy(v: unknown): boolean {
+  return v === true || v === "true";
+}
+
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
@@ -32,6 +36,7 @@ export async function PATCH(
   if ("method" in b) update.method = cleanMethod(b.method);
   if ("payload_template" in b) update.payload_template = b.payload_template ?? {};
   if ("response_map" in b) update.response_map = b.response_map ?? {};
+  if ("use_server_proxy" in b) update.use_server_proxy = cleanUseServerProxy(b.use_server_proxy);
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
@@ -42,7 +47,7 @@ export async function PATCH(
     .update({ ...update, updated_at: new Date().toISOString() })
     .eq("id", id)
     .eq("owner_id", user.id)
-    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, created_at, updated_at")
+    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, use_server_proxy, created_at, updated_at")
     .maybeSingle();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

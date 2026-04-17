@@ -2,6 +2,14 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Puppeteer runs in Node; bundling it breaks native bindings.
+  serverExternalPackages: [
+    "puppeteer",
+    "puppeteer-core",
+    "puppeteer-extra",
+    "puppeteer-extra-plugin-stealth",
+    "@puppeteer/browsers",
+  ],
   webpack: (config, { webpack, nextRuntime }) => {
     // Edge has no Node `__dirname`; some transitive code still references it.
     // Run early (unshift). Banner covers cases DefinePlugin misses on some hosts.

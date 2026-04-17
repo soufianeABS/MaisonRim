@@ -6,6 +6,10 @@ function cleanMethod(v: unknown): "GET" | "POST" {
   return v === "GET" ? "GET" : "POST";
 }
 
+function cleanUseServerProxy(v: unknown): boolean {
+  return v === true || v === "true";
+}
+
 export async function GET() {
   const supabase = await createClient();
   const {
@@ -15,7 +19,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("api_actions")
-    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, created_at, updated_at")
+    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, use_server_proxy, created_at, updated_at")
     .eq("owner_id", user.id)
     .order("updated_at", { ascending: false });
 
@@ -42,6 +46,7 @@ export async function POST(request: NextRequest) {
   const tagName = typeof b.tag_name === "string" ? b.tag_name.trim().slice(0, 120) : "";
   const url = typeof b.url === "string" ? b.url.trim() : "";
   const method = cleanMethod(b.method);
+  const useServerProxy = cleanUseServerProxy(b.use_server_proxy);
   const payloadTemplate = b.payload_template ?? {};
   const responseMap = b.response_map ?? {};
 
@@ -60,8 +65,9 @@ export async function POST(request: NextRequest) {
       method,
       payload_template: payloadTemplate,
       response_map: responseMap,
+      use_server_proxy: useServerProxy,
     })
-    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, created_at, updated_at")
+    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, use_server_proxy, created_at, updated_at")
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
