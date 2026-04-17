@@ -949,7 +949,7 @@ export function ChatWindow({
 
     const baseClasses = `max-w-[85%] min-w-0 px-4 py-3 rounded-2xl shadow-sm ${
       isOwn
-        ? 'bg-green-500 text-white ml-4'
+        ? 'bg-emerald-600 text-white ml-4 ring-1 ring-emerald-700/30 dark:bg-emerald-700 dark:ring-emerald-900/40'
         : 'bg-white dark:bg-muted border border-border mr-4'
     }`;
 
@@ -1033,7 +1033,7 @@ export function ChatWindow({
                 {mediaData.caption}
               </p>
             )}
-            <span className={`text-xs block ${isOwn ? 'text-green-100' : 'text-muted-foreground'}`}>
+            <span className={`text-xs block ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
               {formatTime(message.timestamp)}
             </span>
           </div>
@@ -1043,7 +1043,7 @@ export function ChatWindow({
         return (
           <div className={baseClasses}>
             <div className="flex items-center gap-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl mb-2 min-w-0 w-full max-w-full sm:min-w-[280px] sm:max-w-[400px]">
-              <div className={`p-3 rounded-full ${isOwn ? 'bg-green-600' : 'bg-blue-500'}`}>
+              <div className={`p-3 rounded-full ${isOwn ? 'bg-emerald-700' : 'bg-blue-500'}`}>
                 <FileText className="h-6 w-6 text-white" />
               </div>
               <div className="flex-1 min-w-0">
@@ -1061,7 +1061,7 @@ export function ChatWindow({
                 <Button
                   size="sm"
                   variant="ghost"
-                  className={`p-2 h-10 w-10 ${isOwn ? 'hover:bg-green-600' : 'hover:bg-gray-200'}`}
+                  className={`p-2 h-10 w-10 ${isOwn ? 'hover:bg-emerald-800/40' : 'hover:bg-gray-200'}`}
                   onClick={() => downloadMedia(effectiveMediaUrl, mediaData?.filename || 'document')}
                   disabled={isRefreshing}
                 >
@@ -1076,7 +1076,7 @@ export function ChatWindow({
                 <Button
                   size="sm"
                   variant="ghost"
-                  className={`p-2 h-10 w-10 ${isOwn ? 'hover:bg-green-600' : 'hover:bg-gray-200'}`}
+                  className={`p-2 h-10 w-10 ${isOwn ? 'hover:bg-emerald-800/40' : 'hover:bg-gray-200'}`}
                   onClick={() => refreshMediaUrl(message.id)}
                   disabled={isRefreshing}
                 >
@@ -1084,7 +1084,7 @@ export function ChatWindow({
                 </Button>
               )}
             </div>
-            <span className={`text-xs block ${isOwn ? 'text-green-100' : 'text-muted-foreground'}`}>
+            <span className={`text-xs block ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
               {formatTime(message.timestamp)}
             </span>
           </div>
@@ -1101,7 +1101,7 @@ export function ChatWindow({
               <Button
                 size="sm"
                 variant="ghost"
-                className={`p-3 rounded-full ${isOwn ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-500 hover:bg-blue-600'} text-white`}
+                className={`p-3 rounded-full ${isOwn ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-blue-500 hover:bg-blue-600'} text-white`}
                 onClick={() => effectiveMediaUrl && handleAudioPlay(message.id, effectiveMediaUrl)}
                 disabled={!effectiveMediaUrl || !mediaData?.s3_uploaded || isRefreshing}
               >
@@ -1138,7 +1138,7 @@ export function ChatWindow({
                   <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
                     <div 
                       className={`h-full transition-all duration-300 ${
-                        isOwn ? 'bg-green-300' : 'bg-blue-400'
+                        isOwn ? 'bg-emerald-300/90' : 'bg-blue-400'
                       }`}
                       style={{ width: `${progress}%` }}
                     />
@@ -1158,7 +1158,7 @@ export function ChatWindow({
                 )}
               </div>
             </div>
-            <span className={`text-xs block ${isOwn ? 'text-green-100' : 'text-muted-foreground'}`}>
+            <span className={`text-xs block ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
               {formatTime(message.timestamp)}
             </span>
           </div>
@@ -1227,7 +1227,7 @@ export function ChatWindow({
                 {mediaData.caption}
               </p>
             )}
-            <span className={`text-xs mt-1 block ${isOwn ? 'text-green-100' : 'text-muted-foreground'}`}>
+            <span className={`text-xs mt-1 block ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
               {formatTime(message.timestamp)}
             </span>
           </div>
@@ -1378,7 +1378,7 @@ export function ChatWindow({
             </div>
 
             {/* Timestamp */}
-            <span className={`text-xs mt-3 block ${isOwn ? 'text-green-100' : 'text-muted-foreground'}`}>
+            <span className={`text-xs mt-3 block ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
               {formatTime(message.timestamp)}
             </span>
           </div>
@@ -1394,12 +1394,12 @@ export function ChatWindow({
               {message.content}
             </p>
             <div className="flex items-center gap-2 mt-2">
-              <span className={`text-xs ${isOwn ? 'text-green-100' : 'text-muted-foreground'}`}>
+              <span className={`text-xs ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
                 {formatTime(message.timestamp)}
               </span>
               {isOptimistic && isOwn && (
-                <span className="text-xs text-green-200 flex items-center gap-1">
-                  <span className="inline-block w-1 h-1 bg-green-200 rounded-full animate-pulse"></span>
+                <span className="text-xs text-emerald-100 flex items-center gap-1">
+                  <span className="inline-block w-1 h-1 bg-emerald-200 rounded-full animate-pulse"></span>
                   Sending...
                 </span>
               )}
@@ -1543,14 +1543,14 @@ export function ChatWindow({
           <>
             {/* Broadcast Group Header */}
             <Avatar className="h-10 w-10">
-              <AvatarFallback className="bg-green-600 text-white font-semibold">
+              <AvatarFallback className="bg-emerald-600 text-white font-semibold">
                 <Users className="h-5 w-5" />
               </AvatarFallback>
             </Avatar>
             <div className="flex-1">
               <h2 className="font-semibold text-foreground flex items-center gap-2">
                 {broadcastGroupName}
-                <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
+                <span className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full">
                   Broadcast
                 </span>
               </h2>
@@ -1577,7 +1577,7 @@ export function ChatWindow({
                   referrerPolicy="no-referrer"
                 />
               ) : null}
-              <AvatarFallback className="bg-green-100 text-green-700 font-semibold">
+              <AvatarFallback className="bg-emerald-100 text-emerald-800 font-semibold">
                 {selectedUser.name.substring(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
@@ -1776,7 +1776,7 @@ export function ChatWindow({
       {/* Messages Area */}
       <div 
         ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto p-4 bg-gradient-to-b from-green-50/30 to-blue-50/30 dark:from-green-950/10 dark:to-blue-950/10"
+        className="flex-1 overflow-y-auto p-4 bg-gradient-to-b from-emerald-50/40 to-blue-50/30 dark:from-emerald-950/15 dark:to-blue-950/10"
       >
         {Object.keys(groupedMessages).length === 0 ? (
           // No messages - show appropriate placeholder
@@ -1921,7 +1921,7 @@ export function ChatWindow({
                   ? "Type broadcast message..." 
                   : "Type a message..."
             }
-            className="flex-1 border-border focus:ring-green-500 rounded-full px-4 py-2"
+            className="flex-1 border-border focus:ring-emerald-500 rounded-full px-4 py-2"
             maxLength={1000}
             disabled={isLoading || sendingMedia}
             autoFocus
@@ -1929,7 +1929,7 @@ export function ChatWindow({
           <Button 
             type="submit" 
             disabled={!messageInput.trim() || isLoading || sendingMedia}
-            className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
             {isLoading || sendingMedia ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -1942,9 +1942,9 @@ export function ChatWindow({
 
       {/* Drag and Drop Overlay */}
       {isDragging && (
-        <div className="absolute inset-0 bg-green-500 bg-opacity-20 flex items-center justify-center z-40 backdrop-blur-sm">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 shadow-2xl border-2 border-green-500 border-dashed">
-            <Paperclip className="h-16 w-16 text-green-500 mx-auto mb-4" />
+        <div className="absolute inset-0 bg-emerald-500/20 flex items-center justify-center z-40 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 shadow-2xl border-2 border-emerald-500/70 border-dashed">
+            <Paperclip className="h-16 w-16 text-emerald-600 mx-auto mb-4" />
             <p className="text-2xl font-semibold text-gray-900 dark:text-white text-center mb-2">
               Drop files to send
             </p>
