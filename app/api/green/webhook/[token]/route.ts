@@ -8,6 +8,10 @@ type GreenIncomingMessageWebhook = {
   typeWebhook?: string;
   timestamp?: number;
   idMessage?: string;
+  chatId?: string;
+  status?: string;
+  sendByApi?: boolean;
+  description?: string;
   senderData?: {
     chatId?: string;
     sender?: string;
@@ -102,7 +106,8 @@ export async function POST(
     const isIncoming = typeWebhook === 'incomingMessageReceived';
     const isOutgoingFromPhone = typeWebhook === 'outgoingMessageReceived';
     const isOutgoingFromApi = typeWebhook === 'outgoingAPIMessageReceived';
-    if (!isIncoming && !isOutgoingFromPhone && !isOutgoingFromApi) {
+    const isOutgoingStatus = typeWebhook === 'outgoingMessageStatus';
+    if (!isIncoming && !isOutgoingFromPhone && !isOutgoingFromApi && !isOutgoingStatus) {
       console.log('Green webhook: ignored type', {
         typeWebhook,
         hasSenderData: !!body?.senderData,
@@ -111,11 +116,96 @@ export async function POST(
       return new NextResponse('OK', { status: 200 });
     }
 
-    const chatId = body.senderData?.chatId || body.senderData?.sender;
+    const apiUrl = (userSettings as { green_api_url?: string | null }).green_api_url;
+    const idInstance = (userSettings as { green_id_instance?: string | null }).green_id_instance;
+    const apiTokenInstance = (userSettings as { green_api_token_instance?: string | null })
+      .green_api_token_instance;
+
+    const chatId = (isOutgoingStatus ? body.chatId : null) || body.senderData?.chatId || body.senderData?.sender;
     if (!chatId) return new NextResponse('OK', { status: 200 });
 
     const phoneNumber = extractPhoneFromChatId(chatId);
     if (!phoneNumber) return new NextResponse('OK', { status: 200 });
+
+    // If we only received a status webhook (common for messages sent from phone),
+    // fetch the full message from the journal and continue processing as a normal outgoing message.
+    if (isOutgoingStatus) {
+      const idMessage =
+        typeof body.idMessage === "string" && body.idMessage.length > 0 ? body.idMessage : null;
+      if (!apiUrl || !idInstance || !apiTokenInstance || !idMessage) {
+        console.log("Green webhook: outgoingMessageStatus missing credentials or idMessage", {
+          hasApiUrl: !!apiUrl,
+          hasIdInstance: !!idInstance,
+          hasToken: !!apiTokenInstance,
+          hasIdMessage: !!idMessage,
+        });
+        return new NextResponse("OK", { status: 200 });
+      }
+
+      const getMessageEndpoint = `${apiUrl.replace(/\/+$/, "")}/waInstance${idInstance}/getMessage/${apiTokenInstance}`;
+      const resp = await fetch(getMessageEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId, idMessage }),
+      });
+      const data = await resp.json().catch(async () => {
+        const txt = await resp.text().catch(() => "");
+        return { raw: txt };
+      });
+
+      if (!resp.ok || !data || typeof data !== "object") {
+        console.warn("Green webhook: getMessage failed for outgoingMessageStatus", {
+          chatId,
+          idMessage,
+          status: resp.status,
+          details: data,
+        });
+        return new NextResponse("OK", { status: 200 });
+      }
+
+      // Re-shape into the same format our handler expects for received messages.
+      // getMessage returns fields similar to getChatHistory items (type/typeMessage/textMessage/downloadUrl/etc).
+      const anyMsg = data as Record<string, unknown>;
+      body.idMessage = String(anyMsg.idMessage ?? idMessage);
+      body.timestamp = typeof anyMsg.timestamp === "number" ? (anyMsg.timestamp as number) : body.timestamp;
+      body.senderData = {
+        chatId: String(anyMsg.chatId ?? chatId),
+        sender: undefined,
+        chatName: undefined,
+        senderName: typeof anyMsg.senderName === "string" ? (anyMsg.senderName as string) : undefined,
+        senderContactName:
+          typeof anyMsg.senderContactName === "string" ? (anyMsg.senderContactName as string) : undefined,
+      };
+      const typeMessage = typeof anyMsg.typeMessage === "string" ? (anyMsg.typeMessage as string) : undefined;
+      const downloadUrl = typeof anyMsg.downloadUrl === "string" ? (anyMsg.downloadUrl as string) : undefined;
+      const caption = typeof anyMsg.caption === "string" ? (anyMsg.caption as string) : undefined;
+      const fileName = typeof anyMsg.fileName === "string" ? (anyMsg.fileName as string) : undefined;
+      const mimeType = typeof anyMsg.mimeType === "string" ? (anyMsg.mimeType as string) : undefined;
+      const textMessage = typeof anyMsg.textMessage === "string" ? (anyMsg.textMessage as string) : undefined;
+      body.messageData = {
+        typeMessage,
+        textMessageData: textMessage ? { textMessage } : undefined,
+        fileMessageData: downloadUrl
+          ? {
+              downloadUrl,
+              caption,
+              fileName,
+              mimeType,
+            }
+          : undefined,
+      };
+
+      // For status webhooks, treat it as "sent by me".
+      // (sendByApi false => sent from phone; true => sent by API).
+      // We keep typeWebhook = outgoingMessageStatus but will compute isSentByMe later.
+      console.log("Green webhook: hydrated outgoingMessageStatus via getMessage", {
+        chatId,
+        idMessage,
+        typeMessage,
+        sendByApi: body.sendByApi,
+        status: body.status,
+      });
+    }
 
     const ts =
       typeof body.timestamp === 'number' ? body.timestamp : Math.floor(Date.now() / 1000);
@@ -267,7 +357,7 @@ export async function POST(
     }
 
     // Store message (upsert to handle retries/duplicates cleanly)
-    const isSentByMe = isOutgoingFromPhone || isOutgoingFromApi;
+    const isSentByMe = isOutgoingFromPhone || isOutgoingFromApi || isOutgoingStatus;
     const { error: msgErr } = await supabase.from('messages').upsert(
       [
         {
@@ -282,6 +372,13 @@ export async function POST(
           media_data: JSON.stringify({
             provider: 'green_api',
             typeWebhook,
+            outgoing_status: isOutgoingStatus
+              ? {
+                  status: body.status ?? null,
+                  description: body.description ?? null,
+                  sendByApi: body.sendByApi ?? null,
+                }
+              : undefined,
             ...(isMedia
               ? {
                   type: mappedType,
