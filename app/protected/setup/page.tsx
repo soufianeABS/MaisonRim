@@ -49,7 +49,7 @@ export default function SetupPage() {
   const [loading, setLoading] = useState(true);
   
   // Provider selection
-  const [provider, setProvider] = useState<'whatsapp_cloud' | 'green_api'>('whatsapp_cloud');
+  const [provider, setProvider] = useState<'whatsapp_cloud' | 'green_api'>('green_api');
   const [providerCountryDialCode, setProviderCountryDialCode] = useState<string>('+33'); // default France
   const [providerNationalNumber, setProviderNationalNumber] = useState<string>('');
   const [savingProviderPhone, setSavingProviderPhone] = useState(false);
@@ -102,7 +102,7 @@ export default function SetupPage() {
       if (response.ok && data.settings) {
         setSettings(data.settings);
 
-        const p = (data.settings.messaging_provider || 'whatsapp_cloud') as
+        const p = (data.settings.messaging_provider || 'green_api') as
           | 'whatsapp_cloud'
           | 'green_api';
         setProvider(p);
@@ -288,6 +288,7 @@ export default function SetupPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          messaging_provider: provider,
           provider_phone_number: e164,
         }),
       });
@@ -385,7 +386,7 @@ export default function SetupPage() {
   );
   const whatsappReady = !!(settings?.access_token_added || settings?.webhook_verified);
   const hasCommonPhone = !!settings?.provider_phone_number;
-  const activeProvider = settings?.messaging_provider || 'whatsapp_cloud';
+  const activeProvider = settings?.messaging_provider || 'green_api';
   const isSetupComplete =
     activeProvider === 'green_api'
       ? greenReady && hasCommonPhone
@@ -394,7 +395,7 @@ export default function SetupPage() {
   const setupIncompleteItems: string[] = [];
   if (!hasCommonPhone) {
     setupIncompleteItems.push(
-      'Business phone number — use “Save Phone Number” in the Messaging Provider section above.',
+      'Business phone number — save it in the Messaging Provider section above.',
     );
   }
   if (activeProvider === 'green_api') {
@@ -592,9 +593,45 @@ export default function SetupPage() {
                   {providerPhoneSuccess && (
                     <div className="text-sm text-green-600 bg-green-50 dark:bg-green-950/20 p-3 rounded-lg flex items-center gap-2">
                       <CheckCircle2 className="h-4 w-4" />
-                      <span>Phone number saved!</span>
+                      <span>Saved!</span>
                     </div>
                   )}
+                  <div className="space-y-2 pt-1">
+                    <Label>Provider</Label>
+                    <div className="space-y-2">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="provider"
+                          className="mt-1"
+                          checked={provider === 'green_api'}
+                          onChange={() => setProvider('green_api')}
+                        />
+                        <div>
+                          <div className="font-medium">Green API</div>
+                          <div className="text-sm text-muted-foreground">
+                            Uses Green API instance credentials for sending messages.
+                          </div>
+                        </div>
+                      </label>
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="provider"
+                          className="mt-1"
+                          checked={provider === 'whatsapp_cloud'}
+                          onChange={() => setProvider('whatsapp_cloud')}
+                        />
+                        <div>
+                          <div className="font-medium">WhatsApp Cloud API (Meta)</div>
+                          <div className="text-sm text-muted-foreground">
+                            Uses Meta Graph API + webhook for inbound messages.
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
                   <Button type="submit" variant="outline" disabled={savingProviderPhone}>
                     {savingProviderPhone ? (
                       <>
@@ -602,94 +639,37 @@ export default function SetupPage() {
                         Saving...
                       </>
                     ) : (
-                      'Save Phone Number'
+                      'Save'
                     )}
                   </Button>
                 </form>
-
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="provider"
-                    className="mt-1"
-                    checked={provider === 'whatsapp_cloud'}
-                    onChange={() => setProvider('whatsapp_cloud')}
-                  />
-                  <div>
-                    <div className="font-medium">WhatsApp Cloud API (Meta)</div>
-                    <div className="text-sm text-muted-foreground">
-                      Uses Meta Graph API + webhook for inbound messages.
-                    </div>
-                  </div>
-                </label>
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="provider"
-                    className="mt-1"
-                    checked={provider === 'green_api'}
-                    onChange={() => setProvider('green_api')}
-                  />
-                  <div>
-                    <div className="font-medium">Green API</div>
-                    <div className="text-sm text-muted-foreground">
-                      Uses Green API instance credentials for sending messages.
-                    </div>
-                  </div>
-                </label>
-                <div className="pt-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={async () => {
-                      try {
-                        await fetch('/api/settings/save', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ messaging_provider: provider }),
-                        });
-                        await loadSettings();
-                      } catch (e) {
-                        console.error(e);
-                      }
-                    }}
-                  >
-                    Save Provider Selection
-                  </Button>
-                </div>
               </div>
             </CardContent>
           </Card>
         </div>
 
         <div className="grid md:grid-cols-2 gap-6">
-          {/* Access Token Configuration */}
-          <Card className="shadow-lg">
-            <CardHeader>
-              <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="text-2xl flex items-center gap-2">
-                    Access Token
-                    {settings?.access_token_added && (
-                      <CheckCircle2 className="h-5 w-5 text-green-600" />
-                    )}
-                  </CardTitle>
-                  <CardDescription className="mt-2">
-                    Required for sending WhatsApp messages
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSaveAccessToken} className="space-y-4">
-                {provider !== 'whatsapp_cloud' && (
-                  <div className="text-sm text-amber-700 bg-amber-50 dark:bg-amber-950/20 p-3 rounded-lg flex items-start gap-2">
-                    <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                    <span>
-                      WhatsApp Cloud API is not the selected provider. You can still save these credentials, but sending will use {provider === 'green_api' ? 'Green API' : 'the selected provider'}.
-                    </span>
+          {provider === 'whatsapp_cloud' && (
+            <>
+              {/* Access Token Configuration */}
+              <Card className="shadow-lg">
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-2xl flex items-center gap-2">
+                        Access Token
+                        {settings?.access_token_added && (
+                          <CheckCircle2 className="h-5 w-5 text-green-600" />
+                        )}
+                      </CardTitle>
+                      <CardDescription className="mt-2">
+                        Required for sending WhatsApp messages
+                      </CardDescription>
+                    </div>
                   </div>
-                )}
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSaveAccessToken} className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <Label htmlFor="access-token">Access Token *</Label>
@@ -847,37 +827,187 @@ export default function SetupPage() {
                     ✓ Access token configured
                   </p>
                 )}
-              </form>
-            </CardContent>
-          </Card>
+                  </form>
+                </CardContent>
+              </Card>
 
-          {/* Green API Configuration */}
-          <Card className="shadow-lg">
-            <CardHeader>
-              <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="text-2xl flex items-center gap-2">
-                    Green API
-                    {greenReady && (
-                      <CheckCircle2 className="h-5 w-5 text-green-600" />
-                    )}
-                  </CardTitle>
-                  <CardDescription className="mt-2">
-                    Required for sending WhatsApp messages via Green API
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSaveGreen} className="space-y-4">
-                {provider !== 'green_api' && (
-                  <div className="text-sm text-amber-700 bg-amber-50 dark:bg-amber-950/20 p-3 rounded-lg flex items-start gap-2">
-                    <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                    <span>
-                      Green API is not the selected provider. You can still save these credentials, but sending will use {provider === 'whatsapp_cloud' ? 'WhatsApp Cloud API' : 'the selected provider'}.
-                    </span>
+              {/* Webhook Configuration */}
+              <Card className="shadow-lg">
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-2xl flex items-center gap-2">
+                        Webhook Setup
+                        {settings?.webhook_verified && (
+                          <CheckCircle2 className="h-5 w-5 text-green-600" />
+                        )}
+                      </CardTitle>
+                      <CardDescription className="mt-2">
+                        Required for receiving WhatsApp messages
+                      </CardDescription>
+                    </div>
                   </div>
-                )}
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSaveWebhook} className="space-y-4">
+                    {/* Webhook URL */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Label>Webhook URL</Label>
+                        <Badge variant="secondary" className="text-xs">
+                          Unique to You
+                        </Badge>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          type="text"
+                          value={webhookUrl || 'Loading your unique webhook URL...'}
+                          readOnly
+                          className="font-mono text-sm bg-muted"
+                          placeholder="Your unique webhook URL will appear here"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => copyToClipboard(webhookUrl, 'webhook')}
+                          disabled={!webhookUrl}
+                        >
+                          {copiedWebhookUrl ? (
+                            <Check className="h-4 w-4 text-green-600" />
+                          ) : (
+                            <Copy className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {webhookUrl ? (
+                          "This is your unique webhook URL. Copy it to your Meta webhook configuration"
+                        ) : (
+                          "Your unique webhook URL is being generated..."
+                        )}
+                      </p>
+                    </div>
+                    
+                    {/* Verify Token */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="verify-token">Verify Token *</Label>
+                        {settings?.has_verify_token && (
+                          <Badge variant="secondary" className="text-xs">
+                            Configured
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          id="verify-token"
+                          type="text"
+                          placeholder="Enter a secure verify token"
+                          value={verifyToken}
+                          onChange={(e) => setVerifyToken(e.target.value)}
+                          className="font-mono text-sm"
+                          // readOnly={settings?.webhook_verified}
+                        />
+                        {verifyToken && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => copyToClipboard(verifyToken, 'verify')}
+                          >
+                            {copiedVerifyToken ? (
+                              <Check className="h-4 w-4 text-green-600" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Create a secure token (e.g., random string). You&apos;ll need this when configuring the webhook in Meta
+                      </p>
+                    </div>
+                    
+                    {/* Instructions */}
+                    <div className="bg-muted p-4 rounded-lg space-y-2 text-sm">
+                      <p className="font-semibold">Setup Instructions:</p>
+                      <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                        <li>Create a secure verify token above</li>
+                        <li>Click &quot;Save Webhook Configuration&quot;</li>
+                        <li>Go to Meta Business Suite</li>
+                        <li>Add the webhook URL and verify token</li>
+                        <li>Subscribe to message events</li>
+                      </ol>
+                    </div>
+                    
+                    {webhookError && (
+                      <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/20 p-3 rounded-lg flex items-start gap-2">
+                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        <span>{webhookError}</span>
+                      </div>
+                    )}
+                    
+                    {webhookSuccess && (
+                      <div className="text-sm text-green-600 bg-green-50 dark:bg-green-950/20 p-3 rounded-lg flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Webhook configuration saved! Now verify it in Meta Business Suite</span>
+                      </div>
+                    )}
+                    
+                    <Button 
+                      type="submit" 
+                      className="w-full"
+                      disabled={savingWebhook}
+                    >
+                      {savingWebhook ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        'Save Webhook Configuration'
+                      )}
+                    </Button>
+                    
+                    {settings?.has_verify_token && !settings?.webhook_verified && (
+                      <p className="text-sm text-center text-amber-600">
+                        ⚠ Webhook configured but not yet verified by Meta
+                      </p>
+                    )}
+                    
+                    {settings?.webhook_verified && (
+                      <p className="text-sm text-center text-muted-foreground">
+                        ✓ Webhook verified and active
+                      </p>
+                    )}
+                  </form>
+                </CardContent>
+              </Card>
+            </>
+          )}
+
+          {provider === 'green_api' && (
+            <>
+              {/* Green API Configuration */}
+              <Card className="shadow-lg md:col-span-2">
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-2xl flex items-center gap-2">
+                        Green API
+                        {greenReady && (
+                          <CheckCircle2 className="h-5 w-5 text-green-600" />
+                        )}
+                      </CardTitle>
+                      <CardDescription className="mt-2">
+                        Required for sending WhatsApp messages via Green API
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSaveGreen} className="space-y-4">
 
                 <div className="space-y-2">
                   <Label htmlFor="green-api-url">apiUrl *</Label>
@@ -1035,160 +1165,8 @@ export default function SetupPage() {
               </div>
             </CardContent>
           </Card>
-          
-          {/* Webhook Configuration */}
-          <Card className="shadow-lg">
-            <CardHeader>
-              <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="text-2xl flex items-center gap-2">
-                    Webhook Setup
-                    {settings?.webhook_verified && (
-                      <CheckCircle2 className="h-5 w-5 text-green-600" />
-                    )}
-                  </CardTitle>
-                  <CardDescription className="mt-2">
-                    Required for receiving WhatsApp messages
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSaveWebhook} className="space-y-4">
-                {/* Webhook URL */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Label>Webhook URL</Label>
-                    <Badge variant="secondary" className="text-xs">
-                      Unique to You
-                    </Badge>
-                  </div>
-                  <div className="flex gap-2">
-                    <Input
-                      type="text"
-                      value={webhookUrl || 'Loading your unique webhook URL...'}
-                      readOnly
-                      className="font-mono text-sm bg-muted"
-                      placeholder="Your unique webhook URL will appear here"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => copyToClipboard(webhookUrl, 'webhook')}
-                      disabled={!webhookUrl}
-                    >
-                      {copiedWebhookUrl ? (
-                        <Check className="h-4 w-4 text-green-600" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {webhookUrl ? (
-                      "This is your unique webhook URL. Copy it to your Meta webhook configuration"
-                    ) : (
-                      "Your unique webhook URL is being generated..."
-                    )}
-                  </p>
-                </div>
-                
-                {/* Verify Token */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="verify-token">Verify Token *</Label>
-                    {settings?.has_verify_token && (
-                      <Badge variant="secondary" className="text-xs">
-                        Configured
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <Input
-                      id="verify-token"
-                      type="text"
-                      placeholder="Enter a secure verify token"
-                      value={verifyToken}
-                      onChange={(e) => setVerifyToken(e.target.value)}
-                      className="font-mono text-sm"
-                      // readOnly={settings?.webhook_verified}
-                    />
-                    {verifyToken && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => copyToClipboard(verifyToken, 'verify')}
-                      >
-                        {copiedVerifyToken ? (
-                          <Check className="h-4 w-4 text-green-600" />
-                        ) : (
-                          <Copy className="h-4 w-4" />
-                        )}
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Create a secure token (e.g., random string). You&apos;ll need this when configuring the webhook in Meta
-                  </p>
-                </div>
-                
-                {/* Instructions */}
-                <div className="bg-muted p-4 rounded-lg space-y-2 text-sm">
-                  <p className="font-semibold">Setup Instructions:</p>
-                  <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-                    <li>Create a secure verify token above</li>
-                    <li>Click &quot;Save Webhook Configuration&quot;</li>
-                    <li>Go to Meta Business Suite</li>
-                    <li>Add the webhook URL and verify token</li>
-                    <li>Subscribe to message events</li>
-                  </ol>
-                </div>
-                
-                {webhookError && (
-                  <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/20 p-3 rounded-lg flex items-start gap-2">
-                    <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                    <span>{webhookError}</span>
-                  </div>
-                )}
-                
-                {webhookSuccess && (
-                  <div className="text-sm text-green-600 bg-green-50 dark:bg-green-950/20 p-3 rounded-lg flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4" />
-                    <span>Webhook configuration saved! Now verify it in Meta Business Suite</span>
-                  </div>
-                )}
-                
-                <Button 
-                  type="submit" 
-                  className="w-full"
-                  disabled={savingWebhook}
-                >
-                  {savingWebhook ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    'Save Webhook Configuration'
-                  )}
-                </Button>
-                
-                {settings?.has_verify_token && !settings?.webhook_verified && (
-                  <p className="text-sm text-center text-amber-600">
-                    ⚠ Webhook configured but not yet verified by Meta
-                  </p>
-                )}
-                
-                {settings?.webhook_verified && (
-                  <p className="text-sm text-center text-muted-foreground">
-                    ✓ Webhook verified and active
-                  </p>
-                )}
-              </form>
-            </CardContent>
-          </Card>
+            </>
+          )}
         </div>
         
         {/* Help Section */}
@@ -1197,24 +1175,49 @@ export default function SetupPage() {
             <CardTitle className="text-lg">Need Help?</CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground space-y-2">
-            <p>
-              • <strong>Access Token:</strong> Found in your Meta Business Suite under WhatsApp API settings
-            </p>
-            <p>
-              • <strong>Phone Number ID:</strong> The unique identifier for your WhatsApp Business phone number
-            </p>
-            <p>
-              • <strong>Business Account ID:</strong> Your WhatsApp Business Account ID from Meta Business Suite (used for managing templates)
-            </p>
-            <p>
-              • <strong>Webhook URL:</strong> Each user gets a unique webhook URL with a secure token for enhanced security and multi-tenant support
-            </p>
-            <p>
-              • <strong>Verify Token:</strong> A security token you create to verify webhook requests from Meta (choose a strong, random string)
-            </p>
-            <p className="pt-2 border-t border-border">
-              <strong>Note:</strong> Your unique webhook URL is automatically generated when you first visit this page. Use this URL in your Meta Business Suite webhook configuration.
-            </p>
+            {provider === 'whatsapp_cloud' ? (
+              <>
+                <p>
+                  • <strong>Access Token:</strong> Found in your Meta Business Suite under WhatsApp API settings
+                </p>
+                <p>
+                  • <strong>Phone Number ID:</strong> The unique identifier for your WhatsApp Business phone number
+                </p>
+                <p>
+                  • <strong>Business Account ID:</strong> Your WhatsApp Business Account ID from Meta Business Suite (used for managing templates)
+                </p>
+                <p>
+                  • <strong>Webhook URL:</strong> Each user gets a unique webhook URL with a secure token for enhanced security and multi-tenant support
+                </p>
+                <p>
+                  • <strong>Verify Token:</strong> A security token you create to verify webhook requests from Meta (choose a strong, random string)
+                </p>
+                <p className="pt-2 border-t border-border">
+                  <strong>Note:</strong> Your unique webhook URL is automatically generated when you first visit this page. Use this URL in your Meta Business Suite webhook configuration.
+                </p>
+              </>
+            ) : (
+              <>
+                <p>
+                  • <strong>apiUrl:</strong> Your Green API base URL (example: <span className="font-mono">https://7107.api.greenapi.com</span>)
+                </p>
+                <p>
+                  • <strong>idInstance:</strong> The instance ID from your Green API account
+                </p>
+                <p>
+                  • <strong>apiTokenInstance:</strong> The token for your instance (keep it secret)
+                </p>
+                <p>
+                  • <strong>Webhook URL:</strong> Use the “Green API Webhook URL” shown above for receiving messages
+                </p>
+                <p>
+                  • <strong>Enable Webhook:</strong> After saving credentials, click “Enable Green API Webhook” to start receiving inbound messages
+                </p>
+                <p className="pt-2 border-t border-border">
+                  <strong>Note:</strong> To receive messages, your app must be publicly reachable (set <span className="font-mono">NEXT_PUBLIC_SITE_URL</span> in production).
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
