@@ -47,14 +47,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "GEMINI_API_KEY is not configured on the server." },
-        { status: 503 },
-      );
-    }
-
     const body = await request.json();
     const rawMessages = Array.isArray(body.messages) ? body.messages : [];
     if (rawMessages.length === 0) {
@@ -127,7 +119,7 @@ export async function POST(request: NextRequest) {
       } else if (assignment?.status_id) {
         const { data: status, error: sErr } = await supabase
           .from("contact_statuses")
-          .select("name, rule")
+          .select("name, rule, rule_mode")
           .eq("id", assignment.status_id)
           .eq("owner_id", user.id)
           .maybeSingle();
@@ -137,9 +129,21 @@ export async function POST(request: NextRequest) {
         } else if (status?.rule && String(status.rule).trim().length > 0) {
           const ruleText = String(status.rule).trim();
           const name = String(status.name ?? "Status");
+          const mode = (status as { rule_mode?: string | null }).rule_mode || "ai";
+          if (mode === "hard") {
+            return NextResponse.json({ suggestion: ruleText });
+          }
           systemInstruction = `${systemInstruction}\n\n[Contact status: ${name}]\nRule:\n${ruleText}`.trim();
         }
       }
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "GEMINI_API_KEY is not configured on the server." },
+        { status: 503 },
+      );
     }
 
     const transcript = normalizeTranscript(rawMessages.slice(-10));

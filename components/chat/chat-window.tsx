@@ -172,6 +172,7 @@ export function ChatWindow({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const unreadIndicatorRef = useRef<HTMLDivElement>(null);
+  const messageInputRef = useRef<HTMLInputElement>(null);
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
 
   useEffect(() => {
@@ -546,6 +547,10 @@ export function ChatWindow({
     if (messageInput.trim() && (selectedUser || broadcastGroupName) && !isLoading) {
       onSendMessage(messageInput.trim());
       setMessageInput("");
+      // Keep focus in the input so the user can type the next message immediately
+      requestAnimationFrame(() => {
+        messageInputRef.current?.focus();
+      });
     }
   };
 
@@ -1906,6 +1911,7 @@ export function ChatWindow({
             <MessageSquare className="h-5 w-5" />
           </Button>
           <Input
+            ref={messageInputRef}
             value={messageInput}
             onChange={(e) => setMessageInput(e.target.value)}
             placeholder={

@@ -15,6 +15,7 @@ type ContactStatus = {
   name: string;
   color: string;
   rule: string;
+  rule_mode?: "ai" | "hard";
   created_at: string;
   updated_at: string;
 };
@@ -46,6 +47,7 @@ const emptyForm = {
   name: "",
   color: "#3b82f6",
   rule: "",
+  rule_mode: "ai" as const,
 };
 
 export default function StatusesPage() {
@@ -86,7 +88,12 @@ export default function StatusesPage() {
     void loadStatuses();
   }, [loadStatuses]);
 
-  const createStatus = async (payload: { name: string; color: string; rule: string }) => {
+  const createStatus = async (payload: {
+    name: string;
+    color: string;
+    rule: string;
+    rule_mode: "ai" | "hard";
+  }) => {
     const res = await fetch("/api/contact-statuses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -99,7 +106,7 @@ export default function StatusesPage() {
   const handleAddSuggested = async (s: { name: string; color: string; rule: string }) => {
     setSaving(true);
     try {
-      await createStatus(s);
+      await createStatus({ ...s, rule_mode: "ai" });
       await loadStatuses();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Could not add suggested status");
@@ -116,6 +123,7 @@ export default function StatusesPage() {
         name: form.name.trim(),
         color: form.color.trim(),
         rule: form.rule.trim(),
+        rule_mode: form.rule_mode,
       });
       setForm(emptyForm);
       await loadStatuses();
@@ -132,6 +140,7 @@ export default function StatusesPage() {
       name: s.name ?? "",
       color: s.color ?? "#3b82f6",
       rule: s.rule ?? "",
+      rule_mode: (s.rule_mode === "hard" ? "hard" : "ai") as const,
     });
   };
 
@@ -150,6 +159,7 @@ export default function StatusesPage() {
           name: editForm.name.trim(),
           color: editForm.color.trim(),
           rule: editForm.rule.trim(),
+          rule_mode: editForm.rule_mode,
         }),
       });
       const data = await res.json();
@@ -324,6 +334,34 @@ export default function StatusesPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="st-rule">Rule (optional)</Label>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Mode:</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={form.rule_mode === "ai" ? "default" : "outline"}
+                    className="h-7 px-3 text-xs"
+                    onClick={() => setForm((f) => ({ ...f, rule_mode: "ai" }))}
+                    disabled={saving}
+                  >
+                    AI
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={form.rule_mode === "hard" ? "default" : "outline"}
+                    className="h-7 px-3 text-xs"
+                    onClick={() => setForm((f) => ({ ...f, rule_mode: "hard" }))}
+                    disabled={saving}
+                  >
+                    Hard
+                  </Button>
+                  <span className="ml-1">
+                    {form.rule_mode === "hard"
+                      ? "Suggest reply will return this text exactly (no AI call)."
+                      : "Suggest reply will use AI and include this rule in the prompt."}
+                  </span>
+                </div>
                 <Textarea
                   id="st-rule"
                   value={form.rule}
@@ -452,6 +490,34 @@ export default function StatusesPage() {
 
                         <div className="space-y-2">
                           <Label htmlFor={`edit-rule-${s.id}`}>Rule (optional)</Label>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span className="font-medium text-foreground">Mode:</span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={editForm.rule_mode === "ai" ? "default" : "outline"}
+                              className="h-7 px-3 text-xs"
+                              onClick={() => setEditForm((f) => ({ ...f, rule_mode: "ai" }))}
+                              disabled={saving}
+                            >
+                              AI
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={editForm.rule_mode === "hard" ? "default" : "outline"}
+                              className="h-7 px-3 text-xs"
+                              onClick={() => setEditForm((f) => ({ ...f, rule_mode: "hard" }))}
+                              disabled={saving}
+                            >
+                              Hard
+                            </Button>
+                            <span className="ml-1">
+                              {editForm.rule_mode === "hard"
+                                ? "Return rule text exactly (no AI call)."
+                                : "AI uses this rule in the prompt."}
+                            </span>
+                          </div>
                           <Textarea
                             id={`edit-rule-${s.id}`}
                             value={editForm.rule}
@@ -483,6 +549,9 @@ export default function StatusesPage() {
                       </div>
                     ) : (
                       <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+                        <span className="mr-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground">
+                          {(s.rule_mode === "hard" ? "Hard" : "AI") ?? "AI"}
+                        </span>
                         {s.rule?.trim() ? s.rule : "No rule"}
                       </p>
                     )}

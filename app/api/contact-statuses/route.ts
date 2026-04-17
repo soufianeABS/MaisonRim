@@ -26,7 +26,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("contact_statuses")
-    .select("id, name, color, rule, created_at, updated_at")
+    .select("id, name, color, rule, rule_mode, created_at, updated_at")
     .eq("owner_id", user.id)
     .order("updated_at", { ascending: false });
 
@@ -58,6 +58,7 @@ export async function POST(request: NextRequest) {
   const name = cleanName(b.name);
   const color = typeof b.color === "string" ? b.color.trim() : "";
   const rule = cleanRule(b.rule);
+  const ruleMode = b.rule_mode === "hard" ? "hard" : "ai";
 
   if (!name) {
     return NextResponse.json({ error: "Name is required." }, { status: 400 });
@@ -76,8 +77,9 @@ export async function POST(request: NextRequest) {
       name,
       color,
       rule,
+      rule_mode: ruleMode,
     })
-    .select("id, name, color, rule, created_at, updated_at")
+    .select("id, name, color, rule, rule_mode, created_at, updated_at")
     .single();
 
   if (error) {

@@ -14,6 +14,10 @@ function cleanRule(v: unknown): string {
   return typeof v === "string" ? v.trim().slice(0, 4000) : "";
 }
 
+function cleanRuleMode(v: unknown): "ai" | "hard" {
+  return v === "hard" ? "hard" : "ai";
+}
+
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
@@ -57,6 +61,9 @@ export async function PATCH(
   if ("rule" in b) {
     update.rule = cleanRule(b.rule);
   }
+  if ("rule_mode" in b) {
+    update.rule_mode = cleanRuleMode(b.rule_mode);
+  }
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: "No fields to update." }, { status: 400 });
@@ -67,7 +74,7 @@ export async function PATCH(
     .update(update)
     .eq("id", id)
     .eq("owner_id", user.id)
-    .select("id, name, color, rule, created_at, updated_at")
+    .select("id, name, color, rule, rule_mode, created_at, updated_at")
     .maybeSingle();
 
   if (error) {
