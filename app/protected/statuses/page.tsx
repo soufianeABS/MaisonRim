@@ -20,6 +20,13 @@ type ContactStatus = {
   updated_at: string;
 };
 
+type StatusFormState = {
+  name: string;
+  color: string;
+  rule: string;
+  rule_mode: "ai" | "hard";
+};
+
 const SUGGESTED: Array<Pick<ContactStatus, "name" | "color" | "rule">> = [
   {
     name: "New client",
@@ -43,11 +50,11 @@ const SUGGESTED: Array<Pick<ContactStatus, "name" | "color" | "rule">> = [
   },
 ];
 
-const emptyForm = {
+const emptyForm: StatusFormState = {
   name: "",
   color: "#3b82f6",
   rule: "",
-  rule_mode: "ai" as const,
+  rule_mode: "ai",
 };
 
 export default function StatusesPage() {
@@ -140,7 +147,7 @@ export default function StatusesPage() {
       name: s.name ?? "",
       color: s.color ?? "#3b82f6",
       rule: s.rule ?? "",
-      rule_mode: (s.rule_mode === "hard" ? "hard" : "ai") as const,
+      rule_mode: s.rule_mode === "hard" ? "hard" : "ai",
     });
   };
 
@@ -550,7 +557,7 @@ export default function StatusesPage() {
                     ) : (
                       <p className="text-xs text-muted-foreground whitespace-pre-wrap">
                         <span className="mr-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground">
-                          {(s.rule_mode === "hard" ? "Hard" : "AI") ?? "AI"}
+                          {s.rule_mode === "hard" ? "Hard" : "AI"}
                         </span>
                         {s.rule?.trim() ? s.rule : "No rule"}
                       </p>
