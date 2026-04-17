@@ -49,17 +49,53 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const rawMessages = Array.isArray(body.messages) ? body.messages : [];
+
+    const agentId =
+      typeof body.agentId === "string" && body.agentId.length > 0 ? body.agentId : null;
+    const contactId =
+      typeof body.contactId === "string" && body.contactId.length > 0 ? body.contactId : null;
+
+    /** AI mode: append status rule after agent/default instruction. Hard mode returns above. */
+    let contactAiAugment: { name: string; rule: string } | null = null;
+
+    if (contactId) {
+      const { data: assignment, error: aErr } = await supabase
+        .from("contact_status_assignments")
+        .select("status_id")
+        .eq("owner_id", user.id)
+        .eq("contact_id", contactId)
+        .maybeSingle();
+
+      if (aErr) {
+        console.error("suggest-reply status assignment load:", aErr);
+      } else if (assignment?.status_id) {
+        const { data: status, error: sErr } = await supabase
+          .from("contact_statuses")
+          .select("name, rule, rule_mode")
+          .eq("id", assignment.status_id)
+          .eq("owner_id", user.id)
+          .maybeSingle();
+
+        if (sErr) {
+          console.error("suggest-reply status load:", sErr);
+        } else if (status?.rule && String(status.rule).trim().length > 0) {
+          const ruleText = String(status.rule).trim();
+          const name = String(status.name ?? "Status");
+          const mode = (status as { rule_mode?: string | null }).rule_mode || "ai";
+          if (mode === "hard") {
+            return NextResponse.json({ suggestion: ruleText });
+          }
+          contactAiAugment = { name, rule: ruleText };
+        }
+      }
+    }
+
     if (rawMessages.length === 0) {
       return NextResponse.json(
         { error: "No messages provided. Need recent conversation messages." },
         { status: 400 },
       );
     }
-
-    const agentId =
-      typeof body.agentId === "string" && body.agentId.length > 0 ? body.agentId : null;
-    const contactId =
-      typeof body.contactId === "string" && body.contactId.length > 0 ? body.contactId : null;
 
     let systemInstruction = SUGGEST_REPLY_SYSTEM_INSTRUCTION;
     let temperature = 0.65;
@@ -106,36 +142,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (contactId) {
-      const { data: assignment, error: aErr } = await supabase
-        .from("contact_status_assignments")
-        .select("status_id")
-        .eq("owner_id", user.id)
-        .eq("contact_id", contactId)
-        .maybeSingle();
-
-      if (aErr) {
-        console.error("suggest-reply status assignment load:", aErr);
-      } else if (assignment?.status_id) {
-        const { data: status, error: sErr } = await supabase
-          .from("contact_statuses")
-          .select("name, rule, rule_mode")
-          .eq("id", assignment.status_id)
-          .eq("owner_id", user.id)
-          .maybeSingle();
-
-        if (sErr) {
-          console.error("suggest-reply status load:", sErr);
-        } else if (status?.rule && String(status.rule).trim().length > 0) {
-          const ruleText = String(status.rule).trim();
-          const name = String(status.name ?? "Status");
-          const mode = (status as { rule_mode?: string | null }).rule_mode || "ai";
-          if (mode === "hard") {
-            return NextResponse.json({ suggestion: ruleText });
-          }
-          systemInstruction = `${systemInstruction}\n\n[Contact status: ${name}]\nRule:\n${ruleText}`.trim();
-        }
-      }
+    if (contactAiAugment) {
+      systemInstruction = `${systemInstruction}\n\n[Contact status: ${contactAiAugment.name}]\nRule:\n${contactAiAugment.rule}`.trim();
     }
 
     const apiKey = process.env.GEMINI_API_KEY;

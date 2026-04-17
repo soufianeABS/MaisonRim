@@ -25,6 +25,7 @@ interface ChatUser {
   status_name?: string | null;
   status_color?: string | null;
   status_rule?: string | null;
+  status_rule_mode?: "ai" | "hard" | null;
 }
 
 interface Message {
@@ -70,6 +71,12 @@ interface UnreadConversation {
   display_name: string;
   unread_count: number;
   last_message_time: string;
+}
+
+function normalizeStatusRuleMode(raw: unknown): "ai" | "hard" | null {
+  if (raw === "hard") return "hard";
+  if (raw === "ai") return "ai";
+  return null;
 }
 
 export default function ChatPage() {
@@ -250,6 +257,9 @@ export default function ChatPage() {
           status_name: user.status_name ?? null,
           status_color: user.status_color ?? null,
           status_rule: user.status_rule ?? null,
+          status_rule_mode: normalizeStatusRuleMode(
+            (user as { status_rule_mode?: unknown }).status_rule_mode,
+          ),
         }));
 
         setUsers(transformedUsers);
@@ -724,6 +734,9 @@ export default function ChatPage() {
         status_name: user.status_name ?? null,
         status_color: user.status_color ?? null,
         status_rule: user.status_rule ?? null,
+        status_rule_mode: normalizeStatusRuleMode(
+          (user as { status_rule_mode?: unknown }).status_rule_mode,
+        ),
       }));
 
       setUsers(transformedUsers);

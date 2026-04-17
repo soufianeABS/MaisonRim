@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -52,6 +52,8 @@ interface ChatUser {
   status_name?: string | null;
   status_color?: string | null;
   status_rule?: string | null;
+  /** From contact_conversations.status_rule_mode — enables Suggest reply without messages when "hard". */
+  status_rule_mode?: "ai" | "hard" | null;
 }
 
 interface Message {
@@ -173,6 +175,66 @@ export function ChatWindow({
   const unreadIndicatorRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
+
+  /** When contact_conversations has no status_rule_mode column yet, resolve from /api/contact-statuses. */
+  const [resolvedStatusRuleMode, setResolvedStatusRuleMode] = useState<"ai" | "hard" | null>(null);
+  const [resolvedRuleText, setResolvedRuleText] = useState("");
+
+  useEffect(() => {
+    if (!selectedUser || broadcastGroupName) {
+      setResolvedStatusRuleMode(null);
+      setResolvedRuleText("");
+      return;
+    }
+    const parentMode = selectedUser.status_rule_mode;
+    if (parentMode === "hard" || parentMode === "ai") {
+      setResolvedStatusRuleMode(parentMode);
+      setResolvedRuleText(selectedUser.status_rule?.trim() ?? "");
+      return;
+    }
+    const sid = selectedUser.status_id;
+    if (!sid) {
+      setResolvedStatusRuleMode(null);
+      setResolvedRuleText("");
+      return;
+    }
+    setResolvedStatusRuleMode(null);
+    setResolvedRuleText("");
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/contact-statuses", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok || cancelled) return;
+        const statuses = Array.isArray(data.statuses) ? data.statuses : [];
+        const s = statuses.find((x: { id: string }) => x.id === sid) as
+          | { rule_mode?: string | null; rule?: string | null }
+          | undefined;
+        if (cancelled) return;
+        if (!s) {
+          setResolvedStatusRuleMode(null);
+          setResolvedRuleText("");
+          return;
+        }
+        setResolvedStatusRuleMode(s.rule_mode === "hard" ? "hard" : "ai");
+        setResolvedRuleText(String(s.rule ?? "").trim());
+      } catch {
+        if (!cancelled) {
+          setResolvedStatusRuleMode(null);
+          setResolvedRuleText("");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    broadcastGroupName,
+    selectedUser?.id,
+    selectedUser?.status_id,
+    selectedUser?.status_rule_mode,
+    selectedUser?.status_rule,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -608,62 +670,81 @@ export function ChatWindow({
     }
   }, []);
 
-  const handleSuggestReply = async (agentId: string | null) => {
-    if (!selectedUser || broadcastGroupName || suggestingReply) return;
+  const handleSuggestReply = useCallback(
+    async (agentId: string | null) => {
+      if (!selectedUser || broadcastGroupName || suggestingReply) return;
 
-    const recent = messages
-      .filter((m) => !m.id.startsWith("optimistic_"))
-      .slice(-10);
-    if (recent.length === 0) {
-      alert("No messages in this conversation yet.");
-      return;
-    }
+      const nonOptimistic = messages.filter((m) => !m.id.startsWith("optimistic_"));
+      const hasConversation = nonOptimistic.length > 0;
+      const mode =
+        selectedUser.status_rule_mode === "hard" || selectedUser.status_rule_mode === "ai"
+          ? selectedUser.status_rule_mode
+          : resolvedStatusRuleMode;
+      const ruleText =
+        selectedUser.status_rule?.trim() || resolvedRuleText.trim();
+      const hardRuleWithoutChat = mode === "hard" && ruleText.length > 0;
 
-    setSuggestingReply(true);
-    try {
-      const response = await fetch("/api/ai/suggest-reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: recent.map((m) => ({
-            content: m.content,
-            is_sent_by_me: m.is_sent_by_me,
-            media: (() => {
-              try {
-                if (!m.media_data) return undefined;
-                const md =
-                  typeof m.media_data === "string" ? JSON.parse(m.media_data) : m.media_data;
-                if (!md || typeof md !== "object") return undefined;
-                return {
-                  type: md.type,
-                  mime_type: md.mime_type,
-                  media_url: md.media_url,
-                };
-              } catch {
-                return undefined;
-              }
-            })(),
-          })),
-          contactId: selectedUser.id,
-          ...(agentId ? { agentId } : {}),
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to get suggestion");
+      if (!hasConversation && !hardRuleWithoutChat) {
+        alert("No messages in this conversation yet.");
+        return;
       }
-      const suggestion = String(result.suggestion ?? "").trim();
-      if (!suggestion) {
-        throw new Error("Empty suggestion");
+
+      const recent = nonOptimistic.slice(-10);
+
+      setSuggestingReply(true);
+      try {
+        const response = await fetch("/api/ai/suggest-reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: recent.map((m) => ({
+              content: m.content,
+              is_sent_by_me: m.is_sent_by_me,
+              media: (() => {
+                try {
+                  if (!m.media_data) return undefined;
+                  const md =
+                    typeof m.media_data === "string" ? JSON.parse(m.media_data) : m.media_data;
+                  if (!md || typeof md !== "object") return undefined;
+                  return {
+                    type: md.type,
+                    mime_type: md.mime_type,
+                    media_url: md.media_url,
+                  };
+                } catch {
+                  return undefined;
+                }
+              })(),
+            })),
+            contactId: selectedUser.id,
+            ...(agentId ? { agentId } : {}),
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || "Failed to get suggestion");
+        }
+        const suggestion = String(result.suggestion ?? "").trim();
+        if (!suggestion) {
+          throw new Error("Empty suggestion");
+        }
+        setMessageInput(suggestion.slice(0, 1000));
+      } catch (err) {
+        console.error("Suggest reply:", err);
+        alert(err instanceof Error ? err.message : "Could not get a suggested reply.");
+      } finally {
+        setSuggestingReply(false);
       }
-      setMessageInput(suggestion.slice(0, 1000));
-    } catch (err) {
-      console.error("Suggest reply:", err);
-      alert(err instanceof Error ? err.message : "Could not get a suggested reply.");
-    } finally {
-      setSuggestingReply(false);
-    }
-  };
+    },
+    [
+      selectedUser,
+      broadcastGroupName,
+      suggestingReply,
+      messages,
+      resolvedStatusRuleMode,
+      resolvedRuleText,
+    ],
+  );
 
   const handleSendMedia = async (mediaFiles: MediaFile[]) => {
     // Don't allow media upload in broadcast mode for now
@@ -1443,6 +1524,22 @@ export function ChatWindow({
     }
   };
 
+  const messageCountForSuggest = useMemo(
+    () => messages.filter((m) => !m.id.startsWith("optimistic_")).length,
+    [messages],
+  );
+  const hasConversationForSuggest = messageCountForSuggest > 0;
+  const effectiveStatusRuleMode =
+    selectedUser?.status_rule_mode === "hard" || selectedUser?.status_rule_mode === "ai"
+      ? selectedUser.status_rule_mode
+      : resolvedStatusRuleMode;
+  const effectiveStatusRuleText =
+    (selectedUser?.status_rule?.trim() || resolvedRuleText.trim()) ?? "";
+  const hardSuggestWithoutMessages =
+    effectiveStatusRuleMode === "hard" && effectiveStatusRuleText.length > 0;
+  const suggestReplyBlockedByEmptyHistory =
+    !hasConversationForSuggest && !hardSuggestWithoutMessages;
+
   // Group messages by date
   const groupedMessages = messages.reduce((groups: { [key: string]: Message[] }, message) => {
     const date = new Date(message.timestamp).toDateString();
@@ -1747,9 +1844,13 @@ export function ChatWindow({
                   suggestingReply ||
                   isLoading ||
                   sendingMedia ||
-                  messages.filter((m) => !m.id.startsWith("optimistic_")).length === 0
+                  suggestReplyBlockedByEmptyHistory
                 }
-                title="Choose an AI assistant and draft a reply from the last 10 messages"
+                title={
+                  hardSuggestWithoutMessages && !hasConversationForSuggest
+                    ? "Uses your Hard status rule as the suggested reply (no chat history needed)."
+                    : "Choose an AI assistant and draft a reply from the last 10 messages"
+                }
               >
                 {suggestingReply ? (
                   <>
@@ -1773,7 +1874,7 @@ export function ChatWindow({
                   suggestingReply ||
                   isLoading ||
                   sendingMedia ||
-                  messages.filter((m) => !m.id.startsWith("optimistic_")).length === 0
+                  suggestReplyBlockedByEmptyHistory
                 }
                 onSelect={() => {
                   void handleSuggestReply(null);
@@ -1789,7 +1890,7 @@ export function ChatWindow({
                     suggestingReply ||
                     isLoading ||
                     sendingMedia ||
-                    messages.filter((m) => !m.id.startsWith("optimistic_")).length === 0
+                    suggestReplyBlockedByEmptyHistory
                   }
                   onSelect={() => {
                     void handleSuggestReply(a.id);
