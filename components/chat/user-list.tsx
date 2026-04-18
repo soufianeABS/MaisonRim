@@ -21,8 +21,9 @@ import {
   RefreshCw,
   ChevronDown,
   Bookmark,
+  Loader2,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import {
@@ -123,6 +124,12 @@ export function UserList({
   /** Tags filter: folded shows only the active tag; expand to pick another. */
   const [tagsExpanded, setTagsExpanded] = useState(false);
 
+  /** DB message search (name + full-text across messages); updated debounced when searchTerm ≥ 2 chars. */
+  const [messageSearchMeta, setMessageSearchMeta] = useState<
+    Map<string, { preview: string; matchCount: number; lastAt: string }>
+  >(() => new Map());
+  const [messageSearchLoading, setMessageSearchLoading] = useState(false);
+
   // Groups state
   const [groups, setGroups] = useState<Group[]>([]);
   const [showGroupDialog, setShowGroupDialog] = useState(false);
@@ -188,6 +195,59 @@ export function UserList({
     });
   }, [statuses]);
 
+  useEffect(() => {
+    const q = searchTerm.trim();
+    if (q.length < 2) {
+      setMessageSearchMeta(new Map());
+      setMessageSearchLoading(false);
+      return;
+    }
+    const ac = new AbortController();
+    const t = window.setTimeout(() => {
+      void (async () => {
+        setMessageSearchLoading(true);
+        try {
+          const res = await fetch(
+            `/api/messages/search?q=${encodeURIComponent(q)}`,
+            { signal: ac.signal },
+          );
+          const data = (await res.json()) as {
+            matches?: Array<{
+              contactId: string;
+              preview: string;
+              matchCount: number;
+              lastAt: string;
+            }>;
+          };
+          if (!res.ok) {
+            setMessageSearchMeta(new Map());
+            return;
+          }
+          const m = new Map<string, { preview: string; matchCount: number; lastAt: string }>();
+          for (const x of data.matches || []) {
+            m.set(x.contactId, {
+              preview: x.preview,
+              matchCount: x.matchCount,
+              lastAt: x.lastAt,
+            });
+          }
+          setMessageSearchMeta(m);
+        } catch (e) {
+          if ((e as Error).name !== "AbortError") {
+            console.error("Message search:", e);
+          }
+          setMessageSearchMeta(new Map());
+        } finally {
+          setMessageSearchLoading(false);
+        }
+      })();
+    }, 400);
+    return () => {
+      window.clearTimeout(t);
+      ac.abort();
+    };
+  }, [searchTerm]);
+
   const loadGroups = async () => {
     try {
       const response = await fetch('/api/groups');
@@ -238,14 +298,17 @@ export function UserList({
     }
   };
 
-  const matchesLastReplyFilter = (user: ChatUser) => {
-    if (lastReplyFilter === "all") return true;
-    const hasAnyMessage = Boolean(user.last_message || user.last_message_type);
-    if (!hasAnyMessage) return false;
-    const sender = user.last_message_sender;
-    if (lastReplyFilter === "me") return sender === currentUserId;
-    return Boolean(sender && sender !== currentUserId);
-  };
+  const matchesLastReplyFilter = useCallback(
+    (user: ChatUser) => {
+      if (lastReplyFilter === "all") return true;
+      const hasAnyMessage = Boolean(user.last_message || user.last_message_type);
+      if (!hasAnyMessage) return false;
+      const sender = user.last_message_sender;
+      if (lastReplyFilter === "me") return sender === currentUserId;
+      return Boolean(sender && sender !== currentUserId);
+    },
+    [lastReplyFilter, currentUserId],
+  );
 
   const getMessagePreview = (user: ChatUser) => {
     if (!user.last_message && !user.last_message_type) {
@@ -295,14 +358,51 @@ export function UserList({
       return String(a.id).localeCompare(String(b.id));
     });
 
-  const filteredUsers = sortedUsers.filter(user => {
-    const displayName = getDisplayName(user);
-    const searchableText = `${displayName} ${user.whatsapp_name || ''} ${user.id}`.toLowerCase();
-    const matchesSearch = searchableText.includes(searchTerm.toLowerCase());
-    const effectiveStatusId = (statusOverrides[user.id]?.status_id ?? user.status_id) || null;
-    const matchesStatus = selectedStatusId ? effectiveStatusId === selectedStatusId : true;
-    return matchesSearch && matchesStatus && matchesLastReplyFilter(user);
-  });
+  const filteredUsers = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    const base = sortedUsers.filter((user) => {
+      const displayName = getDisplayName(user);
+      const searchableText =
+        `${displayName} ${user.whatsapp_name || ""} ${user.id}`.toLowerCase();
+      const matchesName = !q || searchableText.includes(q);
+      const matchesMessage =
+        q.length >= 2 && messageSearchMeta.has(user.id);
+      const matchesSearch = !q || matchesName || matchesMessage;
+
+      const effectiveStatusId =
+        (statusOverrides[user.id]?.status_id ?? user.status_id) || null;
+      const matchesStatus = selectedStatusId
+        ? effectiveStatusId === selectedStatusId
+        : true;
+      return matchesSearch && matchesStatus && matchesLastReplyFilter(user);
+    });
+
+    if (!q || q.length < 2 || messageSearchMeta.size === 0) {
+      return base;
+    }
+
+    return [...base].sort((a, b) => {
+      const ma = messageSearchMeta.has(a.id);
+      const mb = messageSearchMeta.has(b.id);
+      if (ma && !mb) return -1;
+      if (!ma && mb) return 1;
+      if (ma && mb) {
+        const ca = messageSearchMeta.get(a.id)!.matchCount;
+        const cb = messageSearchMeta.get(b.id)!.matchCount;
+        if (cb !== ca) return cb - ca;
+      }
+      const aTime = new Date(a.last_message_time || a.last_active).getTime();
+      const bTime = new Date(b.last_message_time || b.last_active).getTime();
+      return bTime - aTime;
+    });
+  }, [
+    sortedUsers,
+    searchTerm,
+    messageSearchMeta,
+    selectedStatusId,
+    statusOverrides,
+    matchesLastReplyFilter,
+  ]);
 
   const assignContactStatus = async (contactId: string, statusId: string | null) => {
     if (!contactId) return;
@@ -916,12 +1016,25 @@ export function UserList({
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
           <input
             type="text"
-            placeholder="Search conversations..."
+            placeholder="Search name, phone, or message text…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-green-500"
+            className="w-full pl-10 pr-10 py-2 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-green-500"
+            aria-busy={messageSearchLoading}
           />
+          {messageSearchLoading && (
+            <Loader2
+              className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground"
+              aria-hidden
+            />
+          )}
         </div>
+        {searchTerm.trim().length >= 2 && (
+          <p className="text-[11px] text-muted-foreground leading-snug">
+            Searching all stored messages (2+ characters). Multiple words must all appear in the same
+            message.
+          </p>
+        )}
         <div
           className="flex rounded-lg border border-border/80 bg-muted/35 p-0.5 shadow-sm"
           role="group"
@@ -1163,10 +1276,34 @@ export function UserList({
                     </div>
                   </div>
                   
-                  <p className={`text-sm text-muted-foreground truncate mt-1 ${
-                    (user.unread_count || 0) > 0 ? "font-medium text-foreground" : ""
-                  }`}>
-                    {getMessagePreview(user)}
+                  <p
+                    className={`text-sm truncate mt-1 ${
+                      messageSearchMeta.has(user.id)
+                        ? "text-foreground"
+                        : `text-muted-foreground ${
+                            (user.unread_count || 0) > 0 ? "font-medium text-foreground" : ""
+                          }`
+                    }`}
+                    title={
+                      messageSearchMeta.get(user.id)?.preview || getMessagePreview(user)
+                    }
+                  >
+                    {messageSearchMeta.has(user.id) ? (
+                      <>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                          Match
+                          {messageSearchMeta.get(user.id)!.matchCount > 1
+                            ? ` (${messageSearchMeta.get(user.id)!.matchCount})`
+                            : ""}
+                          :{" "}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {messageSearchMeta.get(user.id)!.preview || "—"}
+                        </span>
+                      </>
+                    ) : (
+                      getMessagePreview(user)
+                    )}
                   </p>
                 </div>
               </div>
