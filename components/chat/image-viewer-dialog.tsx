@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { X, Download, Pencil, Save, Loader2 } from "lucide-react";
+import {
+  X,
+  Download,
+  Pencil,
+  Save,
+  Loader2,
+  Undo2,
+  Redo2,
+} from "lucide-react";
 
 type ImageViewerDialogProps = {
   isOpen: boolean;
@@ -17,6 +25,16 @@ type ImageViewerDialogProps = {
   onSendEdited?: (file: File) => Promise<void>;
   sending?: boolean;
 };
+
+const MAX_DRAW_HISTORY = 24;
+
+function cloneImageData(src: ImageData): ImageData {
+  return new ImageData(
+    new Uint8ClampedArray(src.data),
+    src.width,
+    src.height,
+  );
+}
 
 function getCanvasPoint(
   canvas: HTMLCanvasElement,
@@ -51,6 +69,26 @@ export function ImageViewerDialog({
   const drawCanvasRef = useRef<HTMLCanvasElement>(null);
   const drawingRef = useRef(false);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+  const hadInkRef = useRef(false);
+  const drawHistoryRef = useRef<ImageData[]>([]);
+  const drawHistoryIndexRef = useRef(0);
+  const [undoUi, setUndoUi] = useState({ canUndo: false, canRedo: false });
+
+  const syncUndoUiState = useCallback(() => {
+    const idx = drawHistoryIndexRef.current;
+    const hist = drawHistoryRef.current;
+    setUndoUi({
+      canUndo: idx > 0,
+      canRedo: idx < hist.length - 1,
+    });
+  }, []);
+
+  const resetDrawHistory = useCallback(() => {
+    drawHistoryRef.current = [];
+    drawHistoryIndexRef.current = 0;
+    hadInkRef.current = false;
+    setUndoUi({ canUndo: false, canRedo: false });
+  }, []);
 
   const resetCanvases = useCallback(() => {
     const bg = bgCanvasRef.current;
@@ -63,7 +101,8 @@ export function ImageViewerDialog({
       const ctx = dr.getContext("2d");
       if (ctx) ctx.clearRect(0, 0, dr.width, dr.height);
     }
-  }, []);
+    resetDrawHistory();
+  }, [resetDrawHistory]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -125,6 +164,11 @@ export function ImageViewerDialog({
             }
             bctx.drawImage(img, 0, 0);
             dctx.clearRect(0, 0, w, h);
+            const emptySnap = dctx.getImageData(0, 0, w, h);
+            drawHistoryRef.current = [cloneImageData(emptySnap)];
+            drawHistoryIndexRef.current = 0;
+            hadInkRef.current = false;
+            setUndoUi({ canUndo: false, canRedo: false });
             resolve();
           };
           img.onerror = () => reject(new Error("Image decode failed"));
@@ -151,6 +195,47 @@ export function ImageViewerDialog({
     setLoadError(null);
   }, [resetCanvases]);
 
+  const commitStrokeSnapshot = useCallback(() => {
+    const dr = drawCanvasRef.current;
+    if (!dr || dr.width === 0) return;
+    const ctx = dr.getContext("2d");
+    if (!ctx) return;
+    const data = ctx.getImageData(0, 0, dr.width, dr.height);
+    const copy = cloneImageData(data);
+    let hist = drawHistoryRef.current.slice(0, drawHistoryIndexRef.current + 1);
+    hist.push(copy);
+    if (hist.length > MAX_DRAW_HISTORY) {
+      const base = hist[0];
+      hist = [base, ...hist.slice(-(MAX_DRAW_HISTORY - 1))];
+    }
+    drawHistoryRef.current = hist;
+    drawHistoryIndexRef.current = hist.length - 1;
+    syncUndoUiState();
+  }, [syncUndoUiState]);
+
+  const undoDraw = useCallback(() => {
+    if (drawHistoryIndexRef.current <= 0) return;
+    const dr = drawCanvasRef.current;
+    const ctx = dr?.getContext("2d");
+    if (!dr || !ctx) return;
+    drawHistoryIndexRef.current -= 1;
+    const snap = drawHistoryRef.current[drawHistoryIndexRef.current];
+    if (snap) ctx.putImageData(snap, 0, 0);
+    syncUndoUiState();
+  }, [syncUndoUiState]);
+
+  const redoDraw = useCallback(() => {
+    const hist = drawHistoryRef.current;
+    if (drawHistoryIndexRef.current >= hist.length - 1) return;
+    const dr = drawCanvasRef.current;
+    const ctx = dr?.getContext("2d");
+    if (!dr || !ctx) return;
+    drawHistoryIndexRef.current += 1;
+    const snap = hist[drawHistoryIndexRef.current];
+    if (snap) ctx.putImageData(snap, 0, 0);
+    syncUndoUiState();
+  }, [syncUndoUiState]);
+
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -164,6 +249,19 @@ export function ImageViewerDialog({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, onClose, editMode, cancelEdit]);
+
+  useEffect(() => {
+    if (!isOpen || !editMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod || e.key.toLowerCase() !== "z") return;
+      e.preventDefault();
+      if (e.shiftKey) redoDraw();
+      else undoDraw();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, editMode, undoDraw, redoDraw]);
 
   const drawLine = useCallback(
     (from: { x: number; y: number }, to: { x: number; y: number }) => {
@@ -189,6 +287,7 @@ export function ImageViewerDialog({
     if (!canvas) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     drawingRef.current = true;
+    hadInkRef.current = false;
     const p = getCanvasPoint(canvas, e.clientX, e.clientY);
     lastPointRef.current = p;
   };
@@ -201,13 +300,18 @@ export function ImageViewerDialog({
     const last = lastPointRef.current;
     if (last) {
       drawLine(last, p);
+      hadInkRef.current = true;
     }
     lastPointRef.current = p;
   };
 
   const onPointerUp = () => {
+    if (drawingRef.current && hadInkRef.current) {
+      commitStrokeSnapshot();
+    }
     drawingRef.current = false;
     lastPointRef.current = null;
+    hadInkRef.current = false;
   };
 
   const handleSaveAndSend = async () => {
@@ -321,6 +425,32 @@ export function ImageViewerDialog({
                     aria-label="Drawing color"
                   />
                 </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1 px-2"
+                  onClick={undoDraw}
+                  disabled={sending || preparingEdit || !undoUi.canUndo}
+                  title="Undo (Ctrl+Z)"
+                  aria-label="Undo stroke"
+                >
+                  <Undo2 className="h-4 w-4" />
+                  <span className="hidden sm:inline">Undo</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1 px-2"
+                  onClick={redoDraw}
+                  disabled={sending || preparingEdit || !undoUi.canRedo}
+                  title="Redo (Ctrl+Shift+Z)"
+                  aria-label="Redo stroke"
+                >
+                  <Redo2 className="h-4 w-4" />
+                  <span className="hidden sm:inline">Redo</span>
+                </Button>
                 <Button
                   type="button"
                   variant="ghost"
