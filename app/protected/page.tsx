@@ -1170,7 +1170,7 @@ export default function ChatPage() {
       </div>
           ) : (
             // Chat Window - Mobile
-            <div className="w-full">
+            <div className="flex h-full min-h-0 w-full flex-col">
               <ChatWindow
                 selectedUser={selectedUser}
                 messages={messages}

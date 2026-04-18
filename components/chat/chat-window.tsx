@@ -1812,7 +1812,7 @@ export function ChatWindow({
 
   return (
     <div 
-      className="h-full flex flex-col bg-background relative"
+      className="relative flex h-full min-h-0 flex-col bg-background"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -1901,8 +1901,14 @@ export function ChatWindow({
           </div>
         </div>
       )}
-      {/* Chat Header */}
-      <div className="p-4 border-b border-border bg-muted/50 flex items-center gap-3">
+      {/* Chat Header — sticky on mobile so back / avatar / title stay visible while scrolling */}
+      <div
+        className={`flex shrink-0 items-center gap-3 border-b border-border ${
+          isMobile
+            ? "sticky top-0 z-30 bg-background/95 px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-background/80"
+            : "bg-muted/50 p-4"
+        }`}
+      >
         {isMobile && onBack && (
           <button 
             onClick={onBack}
@@ -2155,7 +2161,7 @@ export function ChatWindow({
         ref={messagesContainerRef}
         onScroll={onMessagesScroll}
         style={{ overflowAnchor: "none" }}
-        className="flex-1 overflow-y-auto p-4 bg-gradient-to-b from-emerald-50/40 to-blue-50/30 dark:from-emerald-950/15 dark:to-blue-950/10"
+        className="min-h-0 flex-1 overflow-y-auto p-4 bg-gradient-to-b from-emerald-50/40 to-blue-50/30 dark:from-emerald-950/15 dark:to-blue-950/10"
       >
         {!broadcastGroupName && isMessagesLoading && messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">

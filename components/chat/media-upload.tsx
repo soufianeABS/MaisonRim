@@ -133,21 +133,17 @@ export function MediaUpload({
         continue;
       }
 
+      const fileType = getFileType(file);
+      const preview =
+        fileType === "image" ? await createFilePreview(file) : undefined;
+
       const mediaFile: MediaFile = {
         file,
         id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        type: getFileType(file),
-        preview: undefined, // Preview will be generated after upload
-        caption: '',
+        type: fileType,
+        preview,
+        caption: "",
       };
-
-      // Create preview for images
-      if (mediaFile.type === 'image') {
-        const preview = await createFilePreview(file);
-        setMediaFiles(prev => 
-          prev.map(f => f.id === mediaFile.id ? { ...f, preview } : f)
-        );
-      }
 
       validFiles.push(mediaFile);
     }
@@ -244,6 +240,7 @@ export function MediaUpload({
                 src={preview}
                 alt={file.name}
                 fill
+                unoptimized
                 className="object-cover"
               />
             ) : (
