@@ -83,10 +83,14 @@ interface NewUserInput {
   customName: string;
 }
 
+/** Persists the conversation tag filter across refresh and client-side navigation. */
+const TAG_FILTER_STORAGE_KEY = "chat:userListTagFilter";
+
 export function UserList({ users, selectedUser, onUserSelect, currentUserId, onUsersUpdate, onBroadcastToGroup }: UserListProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statuses, setStatuses] = useState<ContactStatus[]>([]);
   const [selectedStatusId, setSelectedStatusId] = useState<string | null>(null);
+  const [tagFilterRestored, setTagFilterRestored] = useState(false);
   const [statusOverrides, setStatusOverrides] = useState<
     Record<string, { status_id: string | null; status_name: string | null; status_color: string | null }>
   >({});
@@ -138,6 +142,44 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
     };
     void load();
   }, []);
+
+  // Restore tag filter from storage (after mount so we don't clear storage on first persist)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(TAG_FILTER_STORAGE_KEY);
+      const id = raw?.trim();
+      if (id) setSelectedStatusId(id);
+    } catch {
+      /* ignore */
+    }
+    setTagFilterRestored(true);
+  }, []);
+
+  // Persist tag filter whenever it changes (only after initial restore)
+  useEffect(() => {
+    if (!tagFilterRestored) return;
+    try {
+      if (selectedStatusId) localStorage.setItem(TAG_FILTER_STORAGE_KEY, selectedStatusId);
+      else localStorage.removeItem(TAG_FILTER_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, [selectedStatusId, tagFilterRestored]);
+
+  // Drop stored filter if the tag no longer exists
+  useEffect(() => {
+    if (statuses.length === 0) return;
+    setSelectedStatusId((prev) => {
+      if (!prev) return prev;
+      if (statuses.some((s) => s.id === prev)) return prev;
+      try {
+        localStorage.removeItem(TAG_FILTER_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+      return null;
+    });
+  }, [statuses]);
 
   const loadGroups = async () => {
     try {
@@ -1116,6 +1158,16 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                                 <span className="truncate">{s.name}</span>
                               </DropdownMenuItem>
                             ))}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem asChild>
+                              <Link
+                                href="/protected/statuses"
+                                className="flex cursor-pointer items-center gap-2"
+                              >
+                                <Tag className="h-4 w-4" />
+                                Manage tags
+                              </Link>
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       );
