@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/server';
 import { uploadBufferToS3 } from '@/lib/r2-storage';
+import { messageIdVariants, previewSnippet } from '@/lib/message-quote';
 
 export const runtime = 'nodejs';
 
@@ -26,6 +27,8 @@ type GreenIncomingMessageWebhook = {
     };
     extendedTextMessageData?: {
       text?: string;
+      /** Quoted / reply-to message id (Green API). */
+      stanzaId?: string;
     };
     fileMessageData?: {
       downloadUrl?: string;
@@ -33,6 +36,16 @@ type GreenIncomingMessageWebhook = {
       fileName?: string;
       jpegThumbnail?: string;
       mimeType?: string;
+    };
+    /**
+     * Present when typeMessage is extendedTextMessage and the user replied (quoted)
+     * — stanzaId may appear here instead of only under extendedTextMessageData.
+     * @see https://green-api.com/en/docs/api/receiving/notifications-format/incoming-message/ExtendedTextMessage/
+     */
+    quotedMessage?: {
+      stanzaId?: string;
+      participant?: string;
+      typeMessage?: string;
     };
   };
 };
@@ -263,6 +276,7 @@ export async function POST(
     const messageTypeMap: Record<string, 'image' | 'video' | 'audio' | 'document' | 'text'> = {
       textMessage: 'text',
       extendedTextMessage: 'text',
+      quotedMessage: 'text',
       imageMessage: 'image',
       videoMessage: 'video',
       audioMessage: 'audio',
@@ -402,8 +416,66 @@ export async function POST(
       }
     }
 
+    // Reply / quote: Green puts stanzaId in extendedTextMessageData and/or messageData.quotedMessage
+    // (extendedTextMessage replies often use quotedMessage.stanzaId only).
+    const quotedStanzaIdRaw =
+      (typeof body.messageData?.extendedTextMessageData?.stanzaId === 'string'
+        ? body.messageData.extendedTextMessageData.stanzaId.trim()
+        : '') ||
+      (typeof body.messageData?.quotedMessage?.stanzaId === 'string'
+        ? body.messageData.quotedMessage.stanzaId.trim()
+        : '');
+    const quotedStanzaId = quotedStanzaIdRaw || undefined;
+
+    let quotedIdToStore: string | undefined = quotedStanzaId;
+    let quotedPreview: string | undefined;
+    if (quotedStanzaId) {
+      const variants = messageIdVariants(quotedStanzaId);
+      const { data: rows } = await supabase
+        .from('messages')
+        .select('id, content')
+        .in('id', variants)
+        .limit(1);
+      const row = rows?.[0];
+      if (row?.content && typeof row.content === 'string') {
+        quotedPreview = previewSnippet(row.content);
+      }
+      if (row?.id) {
+        quotedIdToStore = row.id;
+      }
+    }
+
     // Store message (upsert to handle retries/duplicates cleanly)
     const isSentByMe = isOutgoingFromPhone || isOutgoingFromApi || isOutgoingStatus;
+    const greenMediaPayload: Record<string, unknown> = {
+      provider: 'green_api',
+      typeWebhook,
+      outgoing_status: isOutgoingStatus
+        ? {
+            status: body.status ?? null,
+            description: body.description ?? null,
+            sendByApi: body.sendByApi ?? null,
+          }
+        : undefined,
+      ...(isMedia
+        ? {
+            type: mappedType,
+            mime_type: mediaMimeType,
+            filename: mediaFilename,
+            caption: mediaCaption,
+            media_url: mediaUrl,
+            s3_uploaded: s3Uploaded,
+            green_download_url: fileData?.downloadUrl || null,
+          }
+        : {}),
+      ...(quotedIdToStore
+        ? {
+            quoted_message_id: quotedIdToStore,
+            ...(quotedPreview ? { quoted_message_preview: quotedPreview } : {}),
+          }
+        : {}),
+    };
+
     const { error: msgErr } = await supabase.from('messages').upsert(
       [
         {
@@ -415,28 +487,7 @@ export async function POST(
           is_sent_by_me: isSentByMe,
           is_read: isSentByMe, // outgoing messages are already "read" by the sender
           message_type: mappedType,
-          media_data: JSON.stringify({
-            provider: 'green_api',
-            typeWebhook,
-            outgoing_status: isOutgoingStatus
-              ? {
-                  status: body.status ?? null,
-                  description: body.description ?? null,
-                  sendByApi: body.sendByApi ?? null,
-                }
-              : undefined,
-            ...(isMedia
-              ? {
-                  type: mappedType,
-                  mime_type: mediaMimeType,
-                  filename: mediaFilename,
-                  caption: mediaCaption,
-                  media_url: mediaUrl,
-                  s3_uploaded: s3Uploaded,
-                  green_download_url: fileData?.downloadUrl || null,
-                }
-              : {}),
-          }),
+          media_data: JSON.stringify(greenMediaPayload),
         },
       ],
       { onConflict: 'id', ignoreDuplicates: true },

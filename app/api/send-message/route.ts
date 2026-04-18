@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { createClient } from '@/lib/supabase/server';
+import { messageIdVariants, previewSnippet } from '@/lib/message-quote';
 import { logWhatsAppGraphCall } from '@/lib/whatsapp-graph-debug';
 
 /**
@@ -238,6 +239,20 @@ export async function POST(request: NextRequest) {
         ? quotedMessageId.trim()
         : undefined;
 
+    let quotedPreview: string | undefined;
+    if (quoted) {
+      const variants = messageIdVariants(quoted);
+      const { data: rows } = await supabase
+        .from('messages')
+        .select('content')
+        .in('id', variants)
+        .limit(1);
+      const qRow = rows?.[0];
+      if (qRow?.content && typeof qRow.content === 'string') {
+        quotedPreview = previewSnippet(qRow.content);
+      }
+    }
+
     // Prepare message object for database insertion
     // Note: sender_id is phone number (TEXT), receiver_id is auth user (UUID)
     const messageObject = {
@@ -251,7 +266,12 @@ export async function POST(request: NextRequest) {
       message_type: 'text', // For now, we only send text messages
       media_data: JSON.stringify({
         provider,
-        ...(quoted ? { quoted_message_id: quoted } : {}),
+        ...(quoted
+          ? {
+              quoted_message_id: quoted,
+              ...(quotedPreview ? { quoted_message_preview: quotedPreview } : {}),
+            }
+          : {}),
       }),
     };
 

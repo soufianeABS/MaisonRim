@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/server';
 import { downloadAndUploadToS3 } from '@/lib/r2-storage';
+import { messageIdVariants, previewSnippet } from '@/lib/message-quote';
 
 export const runtime = 'nodejs';
 
@@ -26,6 +27,11 @@ interface WhatsAppMessage {
   from: string;
   timestamp: string;
   type: 'text' | 'image' | 'document' | 'audio' | 'video' | 'sticker';
+  /** Present when this message is a reply (quote) to another message. */
+  context?: {
+    id?: string;
+    from?: string;
+  };
   text?: {
     body: string;
   };
@@ -412,6 +418,37 @@ export async function POST(
 
       console.log(`Message receiver identified as: ${receiverId}`);
 
+      const quotedId =
+        typeof message.context?.id === 'string' && message.context.id.trim().length > 0
+          ? message.context.id.trim()
+          : undefined;
+
+      const mediaPayload: Record<string, unknown> | null = mediaData
+        ? {
+            ...mediaData,
+            media_url: s3MediaUrl,
+            s3_uploaded: s3UploadSuccess,
+            upload_timestamp: s3UploadSuccess ? new Date().toISOString() : null,
+            upload_error: !s3UploadSuccess && mediaData.id ? 'Failed to upload to S3' : null,
+          }
+        : quotedId
+          ? {}
+          : null;
+
+      if (mediaPayload && quotedId) {
+        const variants = messageIdVariants(quotedId);
+        const { data: rows } = await supabase
+          .from('messages')
+          .select('id, content')
+          .in('id', variants)
+          .limit(1);
+        const qRow = rows?.[0];
+        mediaPayload.quoted_message_id = qRow?.id ?? quotedId;
+        if (qRow?.content && typeof qRow.content === 'string') {
+          mediaPayload.quoted_message_preview = previewSnippet(qRow.content);
+        }
+      }
+
       // Prepare message object with S3 URL
       const messageObject = {
         id: message.id,
@@ -422,13 +459,7 @@ export async function POST(
         is_sent_by_me: false,
         is_read: false,
         message_type: messageType,
-        media_data: mediaData ? JSON.stringify({
-          ...mediaData,
-          media_url: s3MediaUrl,
-          s3_uploaded: s3UploadSuccess,
-          upload_timestamp: s3UploadSuccess ? new Date().toISOString() : null,
-          upload_error: !s3UploadSuccess && mediaData.id ? 'Failed to upload to S3' : null
-        }) : null
+        media_data: mediaPayload ? JSON.stringify(mediaPayload) : null,
       };
 
       // Store the message

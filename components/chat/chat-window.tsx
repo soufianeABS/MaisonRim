@@ -72,6 +72,45 @@ interface Message {
   isOptimistic?: boolean; // Flag for optimistic messages
 }
 
+function parseQuotedRefFromMedia(message: Message): {
+  id: string | null;
+  preview?: string;
+} {
+  if (!message.media_data || typeof message.media_data !== "string") {
+    return { id: null };
+  }
+  try {
+    const p = JSON.parse(message.media_data) as Record<string, unknown>;
+    const id =
+      typeof p.quoted_message_id === "string" ? p.quoted_message_id : null;
+    const preview =
+      typeof p.quoted_message_preview === "string"
+        ? p.quoted_message_preview
+        : undefined;
+    return id ? { id, preview } : { id: null };
+  } catch {
+    return { id: null };
+  }
+}
+
+function snippetForQuotedMessage(m: Message): string {
+  const t = m.message_type || "text";
+  switch (t) {
+    case "image":
+      return m.content?.match(/^\[/) ? m.content : "Photo";
+    case "video":
+      return "Video";
+    case "audio":
+      return m.content?.includes("Voice") ? "Voice message" : "Audio";
+    case "document":
+      return m.content?.startsWith("[Document") ? m.content : "Document";
+    case "template":
+      return "Template";
+    default:
+      return (m.content || "").replace(/\s+/g, " ").trim().slice(0, 160);
+  }
+}
+
 interface MediaData {
   type: string;
   id?: string;
@@ -739,6 +778,57 @@ export function ChatWindow({
     return t.length > 80 ? `${t.slice(0, 77)}…` : t;
   };
 
+  const contactDisplayName =
+    selectedUser?.custom_name ||
+    selectedUser?.whatsapp_name ||
+    selectedUser?.name ||
+    "Contact";
+
+  const renderQuoteStripe = (message: Message, isOwn: boolean) => {
+    const ref = parseQuotedRefFromMedia(message);
+    const quotedId = ref.id;
+    if (!quotedId) return null;
+    const original = messages.find(
+      (m) =>
+        m.id === quotedId || m.id.toLowerCase() === quotedId.toLowerCase(),
+    );
+    const snippet =
+      (original ? snippetForQuotedMessage(original) : null) ||
+      ref.preview?.trim() ||
+      "";
+    const label = original
+      ? original.is_sent_by_me
+        ? "You"
+        : contactDisplayName
+      : "Message";
+    const body = snippet || "—";
+
+    return (
+      <div
+        className={`mb-2 rounded-lg overflow-hidden border-l-4 pl-3 py-2 pr-2 text-left ${
+          isOwn
+            ? "border-white/70 bg-black/15"
+            : "border-emerald-600/80 bg-muted/70 dark:bg-muted/40"
+        }`}
+      >
+        <div
+          className={`text-xs font-semibold ${
+            isOwn ? "text-emerald-50" : "text-emerald-700 dark:text-emerald-400"
+          }`}
+        >
+          {label}
+        </div>
+        <div
+          className={`text-xs line-clamp-2 mt-0.5 break-words [overflow-wrap:anywhere] ${
+            isOwn ? "text-emerald-50/95" : "text-muted-foreground"
+          }`}
+        >
+          {body}
+        </div>
+      </div>
+    );
+  };
+
   const handleMessageInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== "Enter" || e.shiftKey) return;
     if (e.nativeEvent.isComposing) return;
@@ -1179,6 +1269,7 @@ export function ChatWindow({
       case 'image':
         return (
           <div className={baseClasses}>
+            {renderQuoteStripe(message, isOwn)}
             {effectiveMediaUrl && mediaData?.s3_uploaded ? (
               <div className="mb-2 relative overflow-hidden rounded-xl">
                 {isMediaLoading && (
@@ -1254,6 +1345,7 @@ export function ChatWindow({
       case 'document':
         return (
           <div className={baseClasses}>
+            {renderQuoteStripe(message, isOwn)}
             <div className="flex items-center gap-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl mb-2 min-w-0 w-full max-w-full sm:min-w-[280px] sm:max-w-[400px]">
               <div className={`p-3 rounded-full ${isOwn ? 'bg-emerald-700' : 'bg-blue-500'}`}>
                 <FileText className="h-6 w-6 text-white" />
@@ -1309,6 +1401,7 @@ export function ChatWindow({
         
         return (
           <div className={baseClasses}>
+            {renderQuoteStripe(message, isOwn)}
             <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl mb-2 min-w-0 w-full max-w-full sm:min-w-[300px] sm:max-w-[400px]">
               <Button
                 size="sm"
@@ -1379,6 +1472,7 @@ export function ChatWindow({
       case 'video':
         return (
           <div className={baseClasses}>
+            {renderQuoteStripe(message, isOwn)}
             {effectiveMediaUrl && mediaData?.s3_uploaded ? (
               <div className="mb-2 relative overflow-hidden rounded-xl max-w-[400px] max-h-[300px]">
                 {isMediaLoading && (
@@ -1449,6 +1543,7 @@ export function ChatWindow({
         // Template message - display final rendered content cleanly
         return (
           <div className={baseClasses}>
+            {renderQuoteStripe(message, isOwn)}
             {/* Template Content - Clean Display */}
             <div className="space-y-3">
               {/* Header Component */}
@@ -1602,6 +1697,7 @@ export function ChatWindow({
         
         return (
           <div className={`${baseClasses} ${isOptimistic ? 'opacity-70' : ''} transition-opacity duration-300`}>
+            {renderQuoteStripe(message, isOwn)}
             <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] leading-relaxed">
               {message.content}
             </p>

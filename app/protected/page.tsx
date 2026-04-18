@@ -912,7 +912,9 @@ export default function ChatPage() {
       timestamp,
       is_sent_by_me: true,
       message_type: 'text',
-      media_data: null
+      media_data: options?.quotedMessageId
+        ? JSON.stringify({ quoted_message_id: options.quotedMessageId })
+        : null,
     };
     
     // Add optimistic message to UI immediately
