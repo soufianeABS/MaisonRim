@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2, Reply } from "lucide-react";
+import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2, Reply, Smile } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchContactStatusesCached } from "@/lib/contact-statuses-cache";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
@@ -238,6 +238,8 @@ export function ChatWindow({
   const [devTextOutbound, setDevTextOutbound] = useState("");
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [reactionBusyId, setReactionBusyId] = useState<string | null>(null);
+  /** Mobile: which message shows the quick-reaction emoji row (desktop uses hover). */
+  const [reactionEmojiMenuMessageId, setReactionEmojiMenuMessageId] = useState<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   /** Wraps the message list; height grows when images load — observe for scroll correction. */
   const messagesInnerRef = useRef<HTMLDivElement>(null);
@@ -712,6 +714,10 @@ export function ChatWindow({
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
   }, [selectedUser, broadcastGroupName, isMobile, onBack, onClose, showMediaUpload, showTemplateSelector, showSavedMessagePicker]);
+
+  useEffect(() => {
+    setReactionEmojiMenuMessageId(null);
+  }, [selectedUser?.id, broadcastGroupName]);
 
   // Handle drag and drop for the entire chat window
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -2240,41 +2246,96 @@ export function ChatWindow({
                               !broadcastGroupName &&
                               !message.id.startsWith("optimistic_") && (
                                 <div
-                                  className={`flex flex-wrap items-center gap-0.5 px-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 ${isOwn ? "justify-end" : "justify-start"}`}
+                                  className={`flex flex-col gap-1 ${isOwn ? "items-end" : "items-start"}`}
                                 >
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setReplyingTo(message);
-                                      messageInputRef.current?.focus();
-                                    }}
-                                    className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                    title="Reply"
+                                  <div
+                                    className={`flex flex-wrap items-center gap-0.5 px-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 ${isOwn ? "justify-end" : "justify-start"}`}
                                   >
-                                    <Reply className="h-4 w-4" />
-                                  </button>
-                                  {onSendReaction &&
-                                    QUICK_REACTION_EMOJIS.map((em) => (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setReplyingTo(message);
+                                        messageInputRef.current?.focus();
+                                      }}
+                                      className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                      title="Reply"
+                                    >
+                                      <Reply className="h-4 w-4" />
+                                    </button>
+                                    {onSendReaction && (
                                       <button
-                                        key={`${message.id}-${em}`}
                                         type="button"
-                                        disabled={reactionBusyId === message.id}
-                                        onClick={() => {
-                                          void (async () => {
-                                            setReactionBusyId(message.id);
-                                            try {
-                                              await onSendReaction(message.id, em);
-                                            } finally {
-                                              setReactionBusyId(null);
-                                            }
-                                          })();
+                                        className="md:hidden rounded p-1 text-muted-foreground/30 hover:text-muted-foreground/50 focus-visible:text-muted-foreground/60 focus-visible:outline-none"
+                                        aria-label="Reactions"
+                                        aria-expanded={
+                                          reactionEmojiMenuMessageId === message.id
+                                        }
+                                        title="Reactions"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setReactionEmojiMenuMessageId((prev) =>
+                                            prev === message.id ? null : message.id,
+                                          );
                                         }}
-                                        className="rounded px-1 py-0.5 text-base leading-none hover:bg-muted disabled:opacity-50"
-                                        title={`React ${em}`}
                                       >
-                                        {em}
+                                        <Smile className="h-4 w-4 stroke-[1.25]" />
                                       </button>
-                                    ))}
+                                    )}
+                                    {onSendReaction && (
+                                      <span className="hidden md:contents">
+                                        {QUICK_REACTION_EMOJIS.map((em) => (
+                                          <button
+                                            key={`${message.id}-desk-${em}`}
+                                            type="button"
+                                            disabled={reactionBusyId === message.id}
+                                            onClick={() => {
+                                              void (async () => {
+                                                setReactionBusyId(message.id);
+                                                try {
+                                                  await onSendReaction(message.id, em);
+                                                } finally {
+                                                  setReactionBusyId(null);
+                                                }
+                                              })();
+                                            }}
+                                            className="rounded px-1 py-0.5 text-base leading-none hover:bg-muted disabled:opacity-50"
+                                            title={`React ${em}`}
+                                          >
+                                            {em}
+                                          </button>
+                                        ))}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {onSendReaction &&
+                                    reactionEmojiMenuMessageId === message.id && (
+                                      <div
+                                        className={`flex md:hidden flex-wrap items-center gap-0.5 px-0.5 ${isOwn ? "justify-end" : "justify-start"}`}
+                                      >
+                                        {QUICK_REACTION_EMOJIS.map((em) => (
+                                          <button
+                                            key={`${message.id}-mob-${em}`}
+                                            type="button"
+                                            disabled={reactionBusyId === message.id}
+                                            onClick={() => {
+                                              void (async () => {
+                                                setReactionBusyId(message.id);
+                                                try {
+                                                  await onSendReaction(message.id, em);
+                                                } finally {
+                                                  setReactionBusyId(null);
+                                                }
+                                                setReactionEmojiMenuMessageId(null);
+                                              })();
+                                            }}
+                                            className="rounded px-1 py-0.5 text-base leading-none hover:bg-muted disabled:opacity-50"
+                                            title={`React ${em}`}
+                                          >
+                                            {em}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
                                 </div>
                               )}
                           </div>
