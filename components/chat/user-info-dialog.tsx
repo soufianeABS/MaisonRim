@@ -14,7 +14,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
-import { fetchContactStatusesCached } from "@/lib/contact-statuses-cache";
+import {
+  fetchContactStatusesCached,
+  type ContactStatusNormalized,
+} from "@/lib/contact-statuses-cache";
 
 interface ChatUser {
   id: string;
@@ -39,13 +42,6 @@ interface UserInfoDialogProps {
   onUsersUpdate?: () => void;
 }
 
-type ContactStatus = {
-  id: string;
-  name: string;
-  color: string;
-  rule: string;
-};
-
 export function UserInfoDialog({
   user,
   isOpen,
@@ -56,7 +52,7 @@ export function UserInfoDialog({
   const [isEditing, setIsEditing] = useState(false);
   const [editingName, setEditingName] = useState(user.custom_name || '');
   const [isUpdating, setIsUpdating] = useState(false);
-  const [statuses, setStatuses] = useState<ContactStatus[]>([]);
+  const [statuses, setStatuses] = useState<ContactStatusNormalized[]>([]);
   const [statusesLoading, setStatusesLoading] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
   const [localStatusName, setLocalStatusName] = useState<string | null>(

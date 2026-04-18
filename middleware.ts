@@ -51,11 +51,14 @@ export async function middleware(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname;
 
+  // Let API route handlers return JSON (401, etc.). Redirecting unauthenticated
+  // /api/* requests to the login page yields HTML and breaks res.json() on the client.
   if (
     pathname !== "/" &&
     !user &&
     !pathname.startsWith("/auth") &&
-    !pathname.startsWith("/login")
+    !pathname.startsWith("/login") &&
+    !pathname.startsWith("/api")
   ) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/login";

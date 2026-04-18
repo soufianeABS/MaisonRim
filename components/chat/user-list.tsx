@@ -20,11 +20,15 @@ import {
   Wrench,
   RefreshCw,
   ChevronDown,
+  Bookmark,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { fetchContactStatusesCached } from "@/lib/contact-statuses-cache";
+import {
+  fetchContactStatusesCached,
+  type ContactStatusNormalized,
+} from "@/lib/contact-statuses-cache";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { GroupsList } from "./groups-list";
@@ -37,12 +41,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-type ContactStatus = {
-  id: string;
-  name: string;
-  color: string;
-};
 
 interface ChatUser {
   id: string;
@@ -96,7 +94,7 @@ export function UserList({
   onBroadcastToGroup,
 }: UserListProps) {
   const [searchTerm, setSearchTerm] = useState("");
-  const [statuses, setStatuses] = useState<ContactStatus[]>([]);
+  const [statuses, setStatuses] = useState<ContactStatusNormalized[]>([]);
   const [selectedStatusId, setSelectedStatusId] = useState<string | null>(null);
   const [tagFilterRestored, setTagFilterRestored] = useState(false);
   const [statusOverrides, setStatusOverrides] = useState<
@@ -663,6 +661,12 @@ export function UserList({
                   {syncingGreenHistory ? "Syncing Green history…" : "Sync history (Green API)"}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/protected/saved-messages" className="flex items-center gap-2">
+                    <Bookmark className="h-4 w-4" />
+                    Saved messages
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link href="/protected/templates" className="flex items-center gap-2">
                     <FileText className="h-4 w-4" />

@@ -21,6 +21,7 @@ import {
 import { MediaUpload } from "./media-upload";
 import { UserInfoDialog } from "./user-info-dialog";
 import { TemplateSelector } from "./template-selector";
+import { SavedMessagePicker } from "./saved-message-picker";
 
 // Template interfaces
 interface TemplateComponent {
@@ -173,6 +174,7 @@ export function ChatWindow({
   const [sendingMedia, setSendingMedia] = useState(false);
   const [showUserInfo, setShowUserInfo] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [showSavedMessagePicker, setShowSavedMessagePicker] = useState(false);
   const [replyAgents, setReplyAgents] = useState<{ id: string; name: string }[]>([]);
   const [replyAgentsLoading, setReplyAgentsLoading] = useState(false);
   const [suggestingReply, setSuggestingReply] = useState(false);
@@ -227,9 +229,7 @@ export function ChatWindow({
       try {
         const statuses = await fetchContactStatusesCached();
         if (cancelled) return;
-        const s = statuses.find((x: { id: string }) => x.id === sid) as
-          | { rule_mode?: string | null; rule?: string | null }
-          | undefined;
+        const s = statuses.find((x) => x.id === sid);
         if (cancelled) return;
         if (!s) {
           setResolvedStatusRuleMode(null);
@@ -587,6 +587,8 @@ export function ChatWindow({
 
   useEffect(() => {
     setReplyingTo(null);
+    setShowSavedMessagePicker(false);
+    setShowTemplateSelector(false);
   }, [selectedUser?.id, broadcastGroupName]);
 
   // Snap to bottom when opening a conversation or when the list grows (instant, before paint — no scroll animation)
@@ -644,6 +646,8 @@ export function ChatWindow({
       if (event.key === 'Escape') {
         if (showMediaUpload) {
           setShowMediaUpload(false);
+        } else if (showSavedMessagePicker) {
+          setShowSavedMessagePicker(false);
         } else if (showTemplateSelector) {
           setShowTemplateSelector(false);
         } else if (isMobile && onBack) {
@@ -655,11 +659,11 @@ export function ChatWindow({
     };
 
     // Only add listener when chat window is active (selectedUser exists)
-    if (selectedUser) {
+    if (selectedUser || broadcastGroupName) {
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
-  }, [selectedUser, isMobile, onBack, onClose, showMediaUpload, showTemplateSelector]);
+  }, [selectedUser, broadcastGroupName, isMobile, onBack, onClose, showMediaUpload, showTemplateSelector, showSavedMessagePicker]);
 
   // Handle drag and drop for the entire chat window
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -2188,14 +2192,22 @@ export function ChatWindow({
               <Paperclip className="h-5 w-5" />
             </Button>
           )}
-          {/* Template button available for both modes */}
+          {/* WhatsApp Cloud: Meta templates · Green API: saved messages → composer */}
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            onClick={() => setShowTemplateSelector(true)}
+            onClick={() =>
+              messagingProvider === "green_api"
+                ? setShowSavedMessagePicker(true)
+                : setShowTemplateSelector(true)
+            }
             className="p-2 hover:bg-muted rounded-full transition-colors"
-            title="Send template"
+            title={
+              messagingProvider === "green_api"
+                ? "Insert saved message"
+                : "Send template"
+            }
           >
             <MessageSquare className="h-5 w-5" />
           </Button>
@@ -2258,8 +2270,9 @@ export function ChatWindow({
         />
       )}
 
-      {/* Template Selector Modal - Works in both individual and broadcast mode */}
-      {(selectedUser || broadcastGroupName) && (
+      {/* Meta message templates (WhatsApp Cloud only in practice) */}
+      {(selectedUser || broadcastGroupName) &&
+        messagingProvider !== "green_api" && (
         <TemplateSelector
           isOpen={showTemplateSelector}
           onClose={() => setShowTemplateSelector(false)}
@@ -2271,6 +2284,22 @@ export function ChatWindow({
           }}
         />
       )}
+
+      {/* Green API: paste saved DB text into composer */}
+      {(selectedUser || broadcastGroupName) &&
+        messagingProvider === "green_api" && (
+          <SavedMessagePicker
+            isOpen={showSavedMessagePicker}
+            onClose={() => setShowSavedMessagePicker(false)}
+            onInsert={(text) => {
+              setMessageInput(text.slice(0, 1000));
+              requestAnimationFrame(() => {
+                messageInputRef.current?.focus();
+                adjustMessageInputHeight();
+              });
+            }}
+          />
+        )}
 
       {/* User Info Dialog - Only in individual chat mode */}
       {selectedUser && (
