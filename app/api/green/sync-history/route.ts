@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { uploadBufferToS3 } from "@/lib/r2-storage";
+import { resolveFrozenWhatsappName } from "@/lib/contact-whatsapp-name";
 
 export const runtime = "nodejs";
 
@@ -324,6 +325,18 @@ export async function POST() {
 
       // 3) Upsert contact so it shows in inbox
       const lastActiveIso = new Date((lastActiveTs || Math.floor(Date.now() / 1000)) * 1000).toISOString();
+      const { data: existingContact } = await admin
+        .from("contacts")
+        .select("whatsapp_name")
+        .eq("owner_id", user.id)
+        .eq("phone", contactPhone)
+        .maybeSingle();
+
+      const whatsappNameForUpsert = resolveFrozenWhatsappName(
+        existingContact?.whatsapp_name,
+        bestName,
+      );
+
       await admin
         .from("contacts")
         .upsert(
@@ -331,7 +344,7 @@ export async function POST() {
             {
               owner_id: user.id,
               phone: contactPhone,
-              whatsapp_name: bestName,
+              whatsapp_name: whatsappNameForUpsert,
               last_active: lastActiveIso,
             },
           ],
