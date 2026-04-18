@@ -9,8 +9,6 @@ import {
   MessageCircle,
   LogOut,
   Plus,
-  Edit3,
-  Check,
   X,
   Phone,
   FileText,
@@ -24,6 +22,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { GroupsList } from "./groups-list";
@@ -99,10 +98,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
   const [newUsers, setNewUsers] = useState<NewUserInput[]>([
     { id: '1', phoneNumber: '', customName: '' }
   ]);
-  const [editingUserId, setEditingUserId] = useState<string | null>(null);
-  const [editingName, setEditingName] = useState("");
   const [isCreatingChat, setIsCreatingChat] = useState(false);
-  const [isUpdatingName, setIsUpdatingName] = useState(false);
   const [syncingGreenHistory, setSyncingGreenHistory] = useState(false);
   const [syncGreenConfirmOpen, setSyncGreenConfirmOpen] = useState(false);
   const [syncGreenResult, setSyncGreenResult] = useState<
@@ -481,55 +477,6 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
     } finally {
       setIsCreatingChat(false);
     }
-  };
-
-  const handleStartEditName = (user: ChatUser) => {
-    setEditingUserId(user.id);
-    setEditingName(user.custom_name || '');
-  };
-
-  const handleSaveEditName = async (userId: string) => {
-    setIsUpdatingName(true);
-    try {
-      const response = await fetch('/api/users/update-name', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId,
-          customName: editingName.trim() || null
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.message || result.error || 'Failed to update name');
-      }
-
-      console.log('Name updated successfully:', result);
-      
-      // Reset editing state
-      setEditingUserId(null);
-      setEditingName("");
-
-      // Refresh users list
-      if (onUsersUpdate) {
-        onUsersUpdate();
-      }
-
-    } catch (error) {
-      console.error('Error updating name:', error);
-      alert(`Failed to update name: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsUpdatingName(false);
-    }
-  };
-
-  const handleCancelEditName = () => {
-    setEditingUserId(null);
-    setEditingName("");
   };
 
   // Group handlers
@@ -913,8 +860,8 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
         </div>
       </div>
 
-      {/* Search */}
-      <div className="p-4 border-b border-border space-y-3">
+      {/* Search + last-sender filter */}
+      <div className="p-3 sm:p-4 border-b border-border space-y-2">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
           <input
@@ -925,33 +872,37 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
             className="w-full pl-10 pr-4 py-2 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-green-500"
           />
         </div>
-        <div className="space-y-1.5">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            Last message
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {(
-              [
-                { id: "all" as const, label: "All" },
-                { id: "client" as const, label: "Client" },
-                { id: "me" as const, label: "You" },
-              ]
-            ).map((opt) => (
-              <Button
-                key={opt.id}
-                type="button"
-                variant={lastReplyFilter === opt.id ? "default" : "outline"}
-                size="sm"
-                className="h-7 px-2.5 text-xs rounded-md"
-                onClick={() => setLastReplyFilter(opt.id)}
-              >
-                {opt.label}
-              </Button>
-            ))}
-          </div>
-          <p className="text-[10px] text-muted-foreground leading-snug">
-            Client = last message from the contact. You = last message you sent from this app.
-          </p>
+        <div
+          className="flex rounded-lg border border-border/80 bg-muted/35 p-0.5 shadow-sm"
+          role="group"
+          aria-label="Last message in thread"
+        >
+          {(
+            [
+              { id: "all" as const, label: "All", title: "All conversations" },
+              {
+                id: "client" as const,
+                label: "Them",
+                title: "Their last message (contact)",
+              },
+              { id: "me" as const, label: "You", title: "Your last message" },
+            ] as const
+          ).map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              title={opt.title}
+              onClick={() => setLastReplyFilter(opt.id)}
+              className={cn(
+                "min-w-0 flex-1 rounded-md px-1 py-1.5 text-[11px] font-medium leading-none transition-colors sm:px-2",
+                lastReplyFilter === opt.id
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -993,9 +944,10 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
           filteredUsers.map((user) => (
             <div
               key={user.id}
-              className={`group p-4 border-b border-border cursor-pointer hover:bg-muted/50 transition-all duration-200 ${
+              className={`p-4 border-b border-border cursor-pointer hover:bg-muted/50 transition-all duration-200 ${
                 selectedUser?.id === user.id ? "bg-muted" : ""
               }`}
+              onClick={() => onUserSelect(user)}
             >
               <div className="flex items-center gap-3">
                 <Avatar className="h-12 w-12">
@@ -1017,66 +969,18 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                   </AvatarFallback>
                 </Avatar>
                 
-                <div className="flex-1 min-w-0" onClick={() => onUserSelect(user)}>
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <div className="flex-1 min-w-0">
-                      {editingUserId === user.id ? (
-                        <div className="flex items-center gap-2">
-                          <Input
-                            value={editingName}
-                            onChange={(e) => setEditingName(e.target.value)}
-                            className="h-6 text-sm"
-                            placeholder="Enter name"
-                            disabled={isUpdatingName}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                handleSaveEditName(user.id);
-                              } else if (e.key === 'Escape') {
-                                handleCancelEditName();
-                              }
-                            }}
-                            autoFocus
-                          />
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleSaveEditName(user.id)}
-                            disabled={isUpdatingName}
-                            className="p-1 h-6 w-6"
-                          >
-                            <Check className="h-3 w-3" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={handleCancelEditName}
-                            disabled={isUpdatingName}
-                            className="p-1 h-6 w-6"
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <h3 className={`font-medium truncate ${
+                      <div className="flex items-center gap-2">
+                        <h3
+                          className={`font-medium truncate ${
                             (user.unread_count || 0) > 0 ? "font-semibold" : ""
-                          }`}>
-                            {getDisplayName(user)}
-                          </h3>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleStartEditName(user);
-                            }}
-                            className="p-1 h-5 w-5 opacity-0 group-hover:opacity-100 hover:opacity-100"
-                            title="Edit name"
-                          >
-                            <Edit3 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      )}
+                          }`}
+                        >
+                          {getDisplayName(user)}
+                        </h3>
+                      </div>
                       
                       {/* Secondary name display */}
                       {getSecondaryName(user) && (
@@ -1112,9 +1016,9 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
                                 isUpdating ? "opacity-60" : ""
                               }`}
                               title={statusName ? `Status: ${statusName}` : "Set tag"}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
                               disabled={isUpdating}
                             >
                               {statusName && statusColor ? (
