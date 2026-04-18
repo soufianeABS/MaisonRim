@@ -19,6 +19,7 @@ import {
   Zap,
   Wrench,
   RefreshCw,
+  ChevronDown,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -109,6 +110,9 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
 
   /** Filter conversations by who sent the most recent message (requires last_message_sender). */
   const [lastReplyFilter, setLastReplyFilter] = useState<"all" | "client" | "me">("all");
+
+  /** Tags filter: folded shows only the active tag; expand to pick another. */
+  const [tagsExpanded, setTagsExpanded] = useState(false);
   
   // Groups state
   const [groups, setGroups] = useState<Group[]>([]);
@@ -813,51 +817,84 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
         </div>
       )}
 
-      {/* Tags (Statuses) */}
-      <div className="px-4 pt-4 pb-2 border-b border-border">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-muted-foreground">Tags</span>
-          {selectedStatusId ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setSelectedStatusId(null)}
-              title="Clear tag filter"
-            >
-              Clear
-            </Button>
-          ) : null}
-        </div>
-        <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
-          <Button
-            type="button"
-            variant={selectedStatusId === null ? "default" : "outline"}
-            size="sm"
-            className="h-8 shrink-0 rounded-full px-3 text-xs"
-            onClick={() => setSelectedStatusId(null)}
-          >
-            All
-          </Button>
-          {statuses.map((s) => (
-            <Button
-              key={s.id}
-              type="button"
-              variant={selectedStatusId === s.id ? "default" : "outline"}
-              size="sm"
-              className="h-8 shrink-0 rounded-full px-3 text-xs gap-2"
-              onClick={() => setSelectedStatusId((prev) => (prev === s.id ? null : s.id))}
-              title={s.name}
-            >
-              <span
-                className="inline-block h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: s.color }}
-              />
-              <span className="max-w-[160px] truncate">{s.name}</span>
-            </Button>
-          ))}
-        </div>
+      {/* Tags (Statuses) — foldable: collapsed shows active tag only */}
+      <div className="border-b border-border px-3 pb-2 pt-3 sm:px-4">
+        <button
+          type="button"
+          onClick={() => setTagsExpanded((v) => !v)}
+          aria-expanded={tagsExpanded}
+          className="flex w-full min-w-0 items-center gap-2 rounded-xl px-1.5 py-1.5 text-left transition-colors hover:bg-muted/50"
+        >
+          <span className="text-xs font-semibold tracking-wide text-muted-foreground">
+            Tags
+          </span>
+          {!tagsExpanded && (
+            <div className="flex min-w-0 flex-1 items-center justify-end sm:justify-start">
+              {selectedStatusId ? (
+                (() => {
+                  const s = statuses.find((x) => x.id === selectedStatusId);
+                  return (
+                    <span className="inline-flex max-w-[min(100%,11rem)] items-center gap-2 rounded-full border border-border/80 bg-gradient-to-r from-muted/50 to-muted/30 px-2.5 py-1 text-xs font-medium text-foreground shadow-sm">
+                      {s?.color ? (
+                        <span
+                          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-background"
+                          style={{ backgroundColor: s.color }}
+                        />
+                      ) : (
+                        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-border" />
+                      )}
+                      <span className="truncate">{s?.name ?? "Tag"}</span>
+                    </span>
+                  );
+                })()
+              ) : (
+                <span className="inline-flex items-center rounded-full bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
+                  All
+                </span>
+              )}
+            </div>
+          )}
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+              tagsExpanded && "rotate-180"
+            )}
+            aria-hidden
+          />
+        </button>
+
+        {tagsExpanded ? (
+          <div className="mt-2">
+            <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible">
+              <Button
+                type="button"
+                variant={selectedStatusId === null ? "default" : "outline"}
+                size="sm"
+                className="h-8 shrink-0 rounded-full px-3 text-xs"
+                onClick={() => setSelectedStatusId(null)}
+              >
+                All
+              </Button>
+              {statuses.map((s) => (
+                <Button
+                  key={s.id}
+                  type="button"
+                  variant={selectedStatusId === s.id ? "default" : "outline"}
+                  size="sm"
+                  className="h-8 shrink-0 rounded-full px-3 text-xs gap-2"
+                  onClick={() => setSelectedStatusId((prev) => (prev === s.id ? null : s.id))}
+                  title={s.name}
+                >
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: s.color }}
+                  />
+                  <span className="max-w-[160px] truncate">{s.name}</span>
+                </Button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Search + last-sender filter */}
