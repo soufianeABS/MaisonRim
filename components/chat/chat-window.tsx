@@ -186,7 +186,7 @@ interface ChatWindowProps {
   onMessageDeleted?: (messageId: string) => void;
 }
 
-const QUICK_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+const QUICK_REACTION_EMOJIS = ["👍", "😊", "❤️", "😂", "😮", "😢", "🙏"];
 
 /** Green API has no documented send for WhatsApp bubble reactions — API uses quoted emoji reply only. */
 function quickReactionButtonTitle(
@@ -197,6 +197,77 @@ function quickReactionButtonTitle(
     return `Reply with ${emoji} (quoted message; Green API cannot attach sticker-style reactions)`;
   }
   return `React with ${emoji}`;
+}
+
+const COMPOSER_EMOJI_USAGE_KEY = "wachat:composerEmojiUsage";
+
+const COMPOSER_EMOJI_PALETTE = [
+  "👍",
+  "❤️",
+  "😂",
+  "😮",
+  "😢",
+  "🙏",
+  "😊",
+  "🔥",
+  "✨",
+  "👏",
+  "🎉",
+  "💯",
+  "🙌",
+  "🤔",
+  "😅",
+  "🤣",
+  "😍",
+  "🥰",
+  "😘",
+  "😎",
+  "🫶",
+  "🩷",
+  "✅",
+  "❌",
+  "⭐",
+  "💪",
+  "👀",
+  "🤝",
+  "👋",
+  "😭",
+  "🥳",
+  "🤯",
+  "😴",
+  "🙈",
+  "💔",
+  "🤷",
+  "🫡",
+  "☕",
+  "🚀",
+  "💬",
+  "📎",
+  "😬",
+  "😐",
+  "🥲",
+  "😀",
+  "🤩",
+  "👻",
+  "🎈",
+] as const;
+
+function sortComposerEmojisByUsage(
+  defaults: readonly string[],
+  usage: Record<string, number>,
+): string[] {
+  const all = new Set<string>([...defaults, ...Object.keys(usage)]);
+  return [...all].sort((a, b) => {
+    const ua = usage[a] ?? 0;
+    const ub = usage[b] ?? 0;
+    if (ub !== ua) return ub - ua;
+    const ia = defaults.indexOf(a);
+    const ib = defaults.indexOf(b);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.localeCompare(b);
+  });
 }
 
 export function ChatWindow({ 
@@ -251,6 +322,8 @@ export function ChatWindow({
   const [reactionBusyId, setReactionBusyId] = useState<string | null>(null);
   /** Mobile: which message shows the quick-reaction emoji row (desktop uses hover). */
   const [reactionEmojiMenuMessageId, setReactionEmojiMenuMessageId] = useState<string | null>(null);
+  const [composerEmojiPickerOpen, setComposerEmojiPickerOpen] = useState(false);
+  const [composerEmojiUsage, setComposerEmojiUsage] = useState<Record<string, number>>({});
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   /** Wraps the message list; height grows when images load — observe for scroll correction. */
   const messagesInnerRef = useRef<HTMLDivElement>(null);
@@ -259,7 +332,13 @@ export function ChatWindow({
   /** If true, keep pinned to bottom when content height changes (images, late layout). */
   const stickToBottomRef = useRef(true);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerEmojiWrapRef = useRef<HTMLDivElement>(null);
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
+
+  const sortedComposerEmojis = useMemo(
+    () => sortComposerEmojisByUsage(COMPOSER_EMOJI_PALETTE, composerEmojiUsage),
+    [composerEmojiUsage],
+  );
 
   /** When contact_conversations has no status_rule_mode column yet, resolve from /api/contact-statuses. */
   const [resolvedStatusRuleMode, setResolvedStatusRuleMode] = useState<"ai" | "hard" | null>(null);
@@ -705,7 +784,9 @@ export function ChatWindow({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        if (showMediaUpload) {
+        if (composerEmojiPickerOpen) {
+          setComposerEmojiPickerOpen(false);
+        } else if (showMediaUpload) {
           setShowMediaUpload(false);
         } else if (showSavedMessagePicker) {
           setShowSavedMessagePicker(false);
@@ -724,10 +805,21 @@ export function ChatWindow({
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
-  }, [selectedUser, broadcastGroupName, isMobile, onBack, onClose, showMediaUpload, showTemplateSelector, showSavedMessagePicker]);
+  }, [
+    selectedUser,
+    broadcastGroupName,
+    isMobile,
+    onBack,
+    onClose,
+    showMediaUpload,
+    showTemplateSelector,
+    showSavedMessagePicker,
+    composerEmojiPickerOpen,
+  ]);
 
   useEffect(() => {
     setReactionEmojiMenuMessageId(null);
+    setComposerEmojiPickerOpen(false);
   }, [selectedUser?.id, broadcastGroupName]);
 
   // Handle drag and drop for the entire chat window
@@ -894,6 +986,64 @@ export function ChatWindow({
       }
     },
     [selectedUser, broadcastGroupName, isLoading, sendingMedia],
+  );
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(COMPOSER_EMOJI_USAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        setComposerEmojiUsage(parsed as Record<string, number>);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!composerEmojiPickerOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = composerEmojiWrapRef.current;
+      if (el && !el.contains(e.target as Node)) {
+        setComposerEmojiPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [composerEmojiPickerOpen]);
+
+  const insertComposerEmoji = useCallback(
+    (emoji: string) => {
+      if (isLoading || sendingMedia) return;
+      const ta = messageInputRef.current;
+      const maxLen = 1000;
+      const prev = messageInput;
+      const start = ta ? ta.selectionStart ?? prev.length : prev.length;
+      const end = ta ? ta.selectionEnd ?? prev.length : prev.length;
+      const next = prev.slice(0, start) + emoji + prev.slice(end);
+      if (next.length > maxLen) return;
+      setMessageInput(next);
+      setComposerEmojiUsage((u) => {
+        const n = { ...u, [emoji]: (u[emoji] ?? 0) + 1 };
+        try {
+          localStorage.setItem(COMPOSER_EMOJI_USAGE_KEY, JSON.stringify(n));
+        } catch {
+          /* ignore */
+        }
+        return n;
+      });
+      setComposerEmojiPickerOpen(false);
+      requestAnimationFrame(() => {
+        const el = messageInputRef.current;
+        if (!el) return;
+        el.focus();
+        const pos = start + emoji.length;
+        el.setSelectionRange(pos, pos);
+        adjustMessageInputHeight();
+      });
+    },
+    [messageInput, isLoading, sendingMedia, adjustMessageInputHeight],
   );
 
   const loadReplyAgents = useCallback(async () => {
@@ -2442,26 +2592,70 @@ export function ChatWindow({
           >
             <MessageSquare className="h-5 w-5" />
           </Button>
-          <Textarea
-            ref={messageInputRef}
-            value={messageInput}
-            onChange={(e) => setMessageInput(e.target.value)}
-            onKeyDown={handleMessageInputKeyDown}
-            onPaste={handleMessagePaste}
-            placeholder={
-              isLoading || sendingMedia 
-                ? "Sending..." 
-                : broadcastGroupName 
-                  ? "Type broadcast message..." 
-                  : "Type a message..."
-            }
-            title="Enter to send · Shift+Enter for a new line · Paste (Ctrl+V) image to attach"
-            rows={1}
-            className="flex-1 min-h-[42px] max-h-[160px] resize-none overflow-y-auto rounded-2xl border-border px-4 py-2.5 focus-visible:ring-emerald-500"
-            maxLength={1000}
-            disabled={isLoading || sendingMedia}
-            autoFocus={!isMobile}
-          />
+          <div
+            ref={composerEmojiWrapRef}
+            className="relative min-w-0 flex-1"
+          >
+            <Textarea
+              ref={messageInputRef}
+              value={messageInput}
+              onChange={(e) => setMessageInput(e.target.value)}
+              onKeyDown={handleMessageInputKeyDown}
+              onPaste={handleMessagePaste}
+              placeholder={
+                isLoading || sendingMedia
+                  ? "Sending..."
+                  : broadcastGroupName
+                    ? "Type broadcast message..."
+                    : "Type a message..."
+              }
+              title="Enter to send · Shift+Enter for a new line · Paste (Ctrl+V) image to attach"
+              rows={1}
+              className="min-h-[42px] max-h-[160px] w-full resize-none overflow-y-auto rounded-2xl border-border py-2.5 pl-11 pr-4 focus-visible:ring-emerald-500"
+              maxLength={1000}
+              disabled={isLoading || sendingMedia}
+              autoFocus={!isMobile}
+            />
+            <button
+              type="button"
+              className="absolute bottom-2 left-2 z-10 rounded-full p-1.5 text-muted-foreground opacity-70 transition-colors hover:bg-muted hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:pointer-events-none disabled:opacity-40"
+              title="Insert emoji"
+              aria-expanded={composerEmojiPickerOpen}
+              aria-haspopup="dialog"
+              aria-label="Insert emoji"
+              disabled={isLoading || sendingMedia}
+              onClick={(e) => {
+                e.preventDefault();
+                setComposerEmojiPickerOpen((o) => !o);
+              }}
+            >
+              <Smile className="h-5 w-5" />
+            </button>
+            {composerEmojiPickerOpen && (
+              <div
+                role="dialog"
+                aria-label="Emoji picker"
+                className="absolute bottom-full left-0 z-50 mb-2 max-h-56 w-[min(calc(100vw-2rem),18rem)] overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-lg"
+              >
+                <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Most used first
+                </div>
+                <div className="grid grid-cols-8 gap-0.5 sm:grid-cols-9">
+                  {sortedComposerEmojis.map((em) => (
+                    <button
+                      key={em}
+                      type="button"
+                      className="flex h-9 items-center justify-center rounded-md text-lg leading-none hover:bg-muted/80 active:scale-95"
+                      title={em}
+                      onClick={() => insertComposerEmoji(em)}
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           <Button 
             type="submit" 
             disabled={!messageInput.trim() || isLoading || sendingMedia}

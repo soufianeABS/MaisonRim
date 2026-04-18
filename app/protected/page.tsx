@@ -1121,6 +1121,7 @@ export default function ChatPage() {
               currentUserId={user.id}
               onUsersUpdate={refreshUsers}
               onBroadcastToGroup={handleBroadcastToGroup}
+              isMobile={false}
             />
           </div>
           
@@ -1166,6 +1167,7 @@ export default function ChatPage() {
                 currentUserId={user.id}
                 onUsersUpdate={refreshUsers}
                 onBroadcastToGroup={handleBroadcastToGroup}
+                isMobile={true}
               />
       </div>
           ) : (

@@ -74,6 +74,8 @@ interface UserListProps {
   currentUserId: string;
   onUsersUpdate?: () => void;
   onBroadcastToGroup?: (groupId: string, groupName: string) => void;
+  /** When true, disable per-conversation tag editing controls. */
+  isMobile?: boolean;
 }
 
 interface NewUserInput {
@@ -92,6 +94,7 @@ export function UserList({
   currentUserId,
   onUsersUpdate,
   onBroadcastToGroup,
+  isMobile = false,
 }: UserListProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statuses, setStatuses] = useState<ContactStatusNormalized[]>([]);
@@ -1057,6 +1060,31 @@ export function UserList({
                       const statusName = ov?.status_name ?? user.status_name ?? null;
                       const statusColor = ov?.status_color ?? user.status_color ?? null;
                       const isUpdating = updatingStatusFor.has(user.id);
+
+                      if (isMobile) {
+                        return (
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium text-foreground/90",
+                              isUpdating && "opacity-60",
+                            )}
+                            title={statusName ? `Status: ${statusName}` : "Tag"}
+                            aria-label={statusName ? `Tag: ${statusName}` : "Tag"}
+                          >
+                            {statusName && statusColor ? (
+                              <span
+                                className="inline-block h-2 w-2 rounded-full"
+                                style={{ backgroundColor: String(statusColor) }}
+                              />
+                            ) : (
+                              <span className="inline-block h-2 w-2 rounded-full border" />
+                            )}
+                            <span className="max-w-[120px] truncate">
+                              {statusName ?? "Tag"}
+                            </span>
+                          </span>
+                        );
+                      }
 
                       return (
                         <DropdownMenu modal={false}>
