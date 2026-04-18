@@ -217,6 +217,7 @@ export function ChatWindow({
   const [audioDurations, setAudioDurations] = useState<{ [key: string]: number }>({});
   const [audioCurrentTime, setAudioCurrentTime] = useState<{ [key: string]: number }>({});
   const [showMediaUpload, setShowMediaUpload] = useState(false);
+  const [mediaUploadInitialFiles, setMediaUploadInitialFiles] = useState<File[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [sendingMedia, setSendingMedia] = useState(false);
   const [showUserInfo, setShowUserInfo] = useState(false);
@@ -843,6 +844,40 @@ export function ChatWindow({
     e.preventDefault();
     commitSend();
   };
+
+  const clearMediaUploadInitialFiles = useCallback(() => {
+    setMediaUploadInitialFiles(null);
+  }, []);
+
+  const handleMessagePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      if (!selectedUser || broadcastGroupName || isLoading || sendingMedia) return;
+      const items = e.clipboardData?.items;
+      if (!items?.length) return;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+        const blob = item.getAsFile();
+        if (!blob || blob.size === 0) continue;
+        const ext =
+          blob.type === "image/jpeg" || blob.type === "image/jpg"
+            ? "jpg"
+            : blob.type === "image/png"
+              ? "png"
+              : blob.type === "image/webp"
+                ? "webp"
+                : "png";
+        const file = new File([blob], `pasted-${Date.now()}.${ext}`, {
+          type: blob.type || "image/png",
+        });
+        e.preventDefault();
+        setMediaUploadInitialFiles([file]);
+        setShowMediaUpload(true);
+        return;
+      }
+    },
+    [selectedUser, broadcastGroupName, isLoading, sendingMedia],
+  );
 
   const loadReplyAgents = useCallback(async () => {
     setReplyAgentsLoading(true);
@@ -2320,6 +2355,7 @@ export function ChatWindow({
             value={messageInput}
             onChange={(e) => setMessageInput(e.target.value)}
             onKeyDown={handleMessageInputKeyDown}
+            onPaste={handleMessagePaste}
             placeholder={
               isLoading || sendingMedia 
                 ? "Sending..." 
@@ -2327,7 +2363,7 @@ export function ChatWindow({
                   ? "Type broadcast message..." 
                   : "Type a message..."
             }
-            title="Enter to send · Shift+Enter for a new line"
+            title="Enter to send · Shift+Enter for a new line · Paste (Ctrl+V) image to attach"
             rows={1}
             className="flex-1 min-h-[42px] max-h-[160px] resize-none overflow-y-auto rounded-2xl border-border px-4 py-2.5 focus-visible:ring-emerald-500"
             maxLength={1000}
@@ -2371,6 +2407,8 @@ export function ChatWindow({
           onClose={() => setShowMediaUpload(false)}
           onSend={handleSendMedia}
           selectedUser={selectedUser}
+          initialFiles={mediaUploadInitialFiles}
+          onInitialFilesConsumed={clearMediaUploadInitialFiles}
         />
       )}
 

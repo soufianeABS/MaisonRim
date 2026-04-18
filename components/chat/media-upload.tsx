@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { X, Upload, Image as ImageIcon, FileText, Music, Video, Send, Loader2, Paperclip } from "lucide-react";
@@ -19,6 +19,9 @@ interface MediaUploadProps {
   onClose: () => void;
   onSend: (files: MediaFile[]) => Promise<void>;
   selectedUser: { id: string; name: string } | null;
+  /** When the parent opens the modal with files (e.g. pasted image from the composer). */
+  initialFiles?: File[] | null;
+  onInitialFilesConsumed?: () => void;
 }
 
 // WhatsApp supported file types
@@ -52,7 +55,14 @@ function isWhatsAppSupportedFileType(mimeType: string): boolean {
   return WHATSAPP_SUPPORTED_TYPES.includes(mimeType.toLowerCase());
 }
 
-export function MediaUpload({ isOpen, onClose, onSend, selectedUser }: MediaUploadProps) {
+export function MediaUpload({
+  isOpen,
+  onClose,
+  onSend,
+  selectedUser,
+  initialFiles,
+  onInitialFilesConsumed,
+}: MediaUploadProps) {
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -150,6 +160,18 @@ export function MediaUpload({ isOpen, onClose, onSend, selectedUser }: MediaUplo
       setMediaFiles(prev => [...prev, ...validFiles]);
     }
   }, []);
+
+  useEffect(() => {
+    if (!isOpen || !initialFiles?.length) return;
+    let cancelled = false;
+    void (async () => {
+      await processFiles(initialFiles);
+      if (!cancelled) onInitialFilesConsumed?.();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, initialFiles, processFiles, onInitialFilesConsumed]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
