@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { seedContactStatusesCache } from "@/lib/contact-statuses-cache";
 
 type ContactStatus = {
   id: string;
@@ -35,7 +36,7 @@ const SUGGESTED: Array<Pick<ContactStatus, "name" | "color" | "rule">> = [
   },
   {
     name: "Finished order",
-    color: "#22c55e",
+    color: "#10b981",
     rule: "Be concise and confirm completion. Offer a simple follow-up (receipt, feedback, or next steps).",
   },
   {
@@ -77,7 +78,9 @@ export default function StatusesPage() {
       const res = await fetch("/api/contact-statuses");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load statuses");
-      setStatuses(data.statuses ?? []);
+      const list = data.statuses ?? [];
+      setStatuses(list);
+      seedContactStatusesCache(list);
 
       const defRes = await fetch("/api/contact-statuses/default", { cache: "no-store" });
       const defData = await defRes.json();
@@ -327,7 +330,7 @@ export default function StatusesPage() {
                     <Input
                       value={form.color}
                       onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
-                      placeholder="#22c55e"
+                      placeholder="#10b981"
                     />
                   </div>
                 </div>
@@ -490,7 +493,7 @@ export default function StatusesPage() {
                             <Input
                               value={editForm.color}
                               onChange={(e) => setEditForm((f) => ({ ...f, color: e.target.value }))}
-                              placeholder="#22c55e"
+                              placeholder="#10b981"
                             />
                           </div>
                         </div>

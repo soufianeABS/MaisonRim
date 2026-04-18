@@ -24,6 +24,7 @@ import {
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { fetchContactStatusesCached } from "@/lib/contact-statuses-cache";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { GroupsList } from "./groups-list";
@@ -86,7 +87,14 @@ interface NewUserInput {
 /** Persists the conversation tag filter across refresh and client-side navigation. */
 const TAG_FILTER_STORAGE_KEY = "chat:userListTagFilter";
 
-export function UserList({ users, selectedUser, onUserSelect, currentUserId, onUsersUpdate, onBroadcastToGroup }: UserListProps) {
+export function UserList({
+  users,
+  selectedUser,
+  onUserSelect,
+  currentUserId,
+  onUsersUpdate,
+  onBroadcastToGroup,
+}: UserListProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statuses, setStatuses] = useState<ContactStatus[]>([]);
   const [selectedStatusId, setSelectedStatusId] = useState<string | null>(null);
@@ -127,14 +135,12 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
     loadGroups();
   }, []);
 
-  // Load statuses (tags) on component mount
+  // Load statuses (tags) on mount — shared cache with ChatWindow (no refetch per conversation)
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch("/api/contact-statuses", { cache: "no-store" });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || "Failed to load statuses");
-        setStatuses(Array.isArray(data?.statuses) ? data.statuses : []);
+        const list = await fetchContactStatusesCached();
+        setStatuses(list);
       } catch (e) {
         console.error("Error loading statuses:", e);
         setStatuses([]);
@@ -983,10 +989,9 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
               key={user.id}
               className={cn(
                 "border-b border-border p-4 cursor-pointer select-none",
-                "transition-[transform,box-shadow,background-color] duration-200 ease-out",
-                "hover:bg-muted/50 active:scale-[0.99] active:bg-muted/70",
+                "transition-colors duration-100 hover:bg-muted/50",
                 selectedUser?.id === user.id &&
-                  "bg-muted ring-2 ring-inset ring-green-500/55 shadow-[inset_0_1px_0_0_rgba(34,197,94,0.15)]"
+                  "bg-muted ring-2 ring-inset ring-green-500/55 shadow-[inset_0_1px_0_0_rgba(16,185,129,0.12)]"
               )}
               aria-current={selectedUser?.id === user.id ? "true" : undefined}
               onClick={() => onUserSelect(user)}

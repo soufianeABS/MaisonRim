@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { UserList } from "@/components/chat/user-list";
 import { ChatWindow } from "@/components/chat/chat-window";
@@ -93,10 +93,35 @@ export default function ChatPage() {
   const [setupProviderHint, setSetupProviderHint] = useState<
     'whatsapp_cloud' | 'green_api'
   >('whatsapp_cloud');
+  /** Active messaging provider for chat actions (reply / reaction). */
+  const [messagingProvider, setMessagingProvider] = useState<
+    'whatsapp_cloud' | 'green_api' | null
+  >(null);
   const [broadcastGroupId, setBroadcastGroupId] = useState<string | null>(null);
   const [broadcastGroupName, setBroadcastGroupName] = useState<string | null>(null);
+  /** 1:1 thread: fetching messages from RPC (false when showing cached prefetch). */
+  const [threadLoading, setThreadLoading] = useState(false);
   const supabase = createClient();
   const avatarBackfillAttemptedRef = useState(() => new Set<string>())[0];
+  /** Recent conversation payloads — hover prefetch + instant reopen. */
+  const messagesCacheRef = useRef(
+    new Map<string, { messages: Message[]; at: number }>(),
+  );
+  const CACHE_TTL_MS = 90_000;
+
+  const mapMessageRows = useCallback(
+    (rows: unknown[]): Message[] => {
+      if (!user) return [];
+      return (rows as (MessagePayload & { message_timestamp?: string })[]).map(
+        (msg) => ({
+          ...msg,
+          timestamp: msg.message_timestamp || msg.timestamp,
+          is_sent_by_me: isMessageFromCurrentUser(msg, user.id),
+        }),
+      ) as Message[];
+    },
+    [user],
+  );
 
   // Define handleBackToUsers early so it can be used in useEffect
   const handleBackToUsers = useCallback(() => {
@@ -148,6 +173,7 @@ export default function ChatPage() {
         
         const provider = data.settings?.messaging_provider || 'whatsapp_cloud';
         setSetupProviderHint(provider === 'green_api' ? 'green_api' : 'whatsapp_cloud');
+        setMessagingProvider(provider === 'green_api' ? 'green_api' : 'whatsapp_cloud');
         const hasCommonPhone = !!data.settings?.provider_phone_number;
         const greenReady = !!(
           data.settings?.green_api_url &&
@@ -397,45 +423,48 @@ export default function ChatPage() {
   useEffect(() => {
     if (!selectedUser || !user) {
       setMessages([]);
+      setThreadLoading(false);
       return;
     }
 
-    const fetchMessages = async () => {
-      console.log(`Fetching messages between ${user.id} and ${selectedUser.id}`);
-      
-      // Use the database function to get conversation messages
-      const { data, error } = await supabase.rpc('get_conversation_messages', {
-        other_user_id: selectedUser.id
+    let cancelled = false;
+    const contactId = selectedUser.id;
+
+    const cached = messagesCacheRef.current.get(contactId);
+    const cacheFresh = !!(cached && Date.now() - cached.at < CACHE_TTL_MS);
+
+    if (cacheFresh && cached) {
+      setMessages(cached.messages);
+      setThreadLoading(false);
+    } else {
+      setMessages([]);
+      setThreadLoading(true);
+    }
+
+    const loadMessages = async () => {
+      const { data, error } = await supabase.rpc("get_conversation_messages", {
+        other_user_id: contactId,
       });
-      
+
+      if (cancelled) return;
+
       if (error) {
-        console.error('Error fetching messages:', error);
-        console.error('Error details:', JSON.stringify(error, null, 2));
-        console.error('Selected user ID:', selectedUser.id);
-        console.error('Current user ID:', user.id);
-      } else {
-        console.log(`Fetched ${data?.length || 0} messages`);
-        // Map message_timestamp back to timestamp for the interface and ensure is_sent_by_me is set
-        const mappedMessages = (data || []).map((msg: MessagePayload & { message_timestamp?: string }) => ({
-          ...msg,
-          timestamp: msg.message_timestamp || msg.timestamp,
-          is_sent_by_me: isMessageFromCurrentUser(msg, user.id),
-        }));
-        setMessages(mappedMessages);
-        
-        // Debug: Log first few messages to check is_sent_by_me values
-        if (mappedMessages.length > 0) {
-          console.log('Sample messages with is_sent_by_me:', mappedMessages.slice(0, 3).map((m: Message) => ({
-            id: m.id,
-            sender_id: m.sender_id,
-            is_sent_by_me: m.is_sent_by_me,
-            content: m.content?.substring(0, 20)
-          })));
+        console.error("Error fetching messages:", error);
+        if (!cacheFresh) {
+          setMessages([]);
         }
+      } else {
+        const mappedMessages = mapMessageRows(data || []);
+        setMessages(mappedMessages);
+        messagesCacheRef.current.set(contactId, {
+          messages: mappedMessages,
+          at: Date.now(),
+        });
       }
+      setThreadLoading(false);
     };
 
-    fetchMessages();
+    void loadMessages();
 
     // Set up real-time subscription for messages with a unique channel name
     const channelName = `messages-${user.id}-${selectedUser.id}-${Date.now()}`;
@@ -446,8 +475,6 @@ export default function ChatPage() {
         schema: 'public', 
         table: 'messages'
       }, (payload) => {
-        console.log('New message received via real-time:', payload);
-        
         const newMessage = payload.new as MessagePayload;
         
         // Messages are stored as: sender_id = contact phone, receiver_id = owner user id (both directions)
@@ -456,23 +483,13 @@ export default function ChatPage() {
           newMessage.sender_id === selectedUser.id;
         
         if (isRelevantMessage) {
-          console.log('Adding message to conversation');
-          
           const sentByMe = isMessageFromCurrentUser(newMessage, user.id);
           const messageWithFlag: Message = {
             ...newMessage,
             is_sent_by_me: sentByMe,
             timestamp: newMessage.timestamp || new Date().toISOString()
           };
-          
-          console.log('Real-time message flags:', {
-            message_id: messageWithFlag.id,
-            sender_id: newMessage.sender_id,
-            current_user_id: user.id,
-            is_sent_by_me: messageWithFlag.is_sent_by_me,
-            content: messageWithFlag.content?.substring(0, 20)
-          });
-          
+
           setMessages((prev) => {
             // Avoid duplicates (same WhatsApp id, or replace optimistic same content / outbound)
             const exists = prev.find(m =>
@@ -515,8 +532,6 @@ export default function ChatPage() {
         schema: 'public', 
         table: 'messages'
       }, (payload) => {
-        console.log('Message updated:', payload);
-        
         const updatedMessage = payload.new as MessagePayload;
         
         // Messages are stored as: sender_id = contact phone, receiver_id = owner user id (both directions)
@@ -548,13 +563,11 @@ export default function ChatPage() {
       })
       .subscribe();
 
-    console.log(`Subscribed to messages channel: ${channelName}`);
-
     return () => {
-      console.log(`Unsubscribing from messages channel: ${channelName}`);
+      cancelled = true;
       messagesSubscription.unsubscribe();
     };
-  }, [selectedUser, user, supabase]);
+  }, [selectedUser, user, supabase, mapMessageRows]);
 
   // Fetch broadcast messages when broadcast group is selected
   useEffect(() => {
@@ -641,63 +654,41 @@ export default function ChatPage() {
     };
   }, [broadcastGroupId, user, supabase, selectedUser]);
 
-  // Handle user selection and mark messages as read
-  const handleUserSelect = async (selectedUser: ChatUser) => {
-    console.log('User selected:', selectedUser);
-    
-    // Clear broadcast group state when selecting an individual user
+  // Handle user selection — keep this synchronous so the UI switches immediately (no await before paint).
+  const handleUserSelect = (next: ChatUser) => {
     setBroadcastGroupId(null);
     setBroadcastGroupName(null);
-    
-    setSelectedUser(selectedUser);
-    
-    // Immediately clear unread count in UI for better UX
-    if (selectedUser.unread_count && selectedUser.unread_count > 0) {
-      setUsers(prev => prev.map(u => 
-        u.id === selectedUser.id 
-          ? { ...u, unread_count: 0 }
-          : u
-      ));
-      
-      // Mark messages as read in the background
-      try {
-        const response = await fetch('/api/messages/mark-read', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            otherUserId: selectedUser.id
-          }),
+    setSelectedUser(next);
+    setShowChat(true);
+
+    const prevUnread = next.unread_count ?? 0;
+    if (prevUnread > 0) {
+      setUsers((u) =>
+        u.map((row) =>
+          row.id === next.id ? { ...row, unread_count: 0 } : row,
+        ),
+      );
+      void fetch("/api/messages/mark-read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otherUserId: next.id }),
+      })
+        .then((res) => {
+          if (!res.ok) {
+            setUsers((u) =>
+              u.map((row) =>
+                row.id === next.id ? { ...row, unread_count: prevUnread } : row,
+              ),
+            );
+          }
+        })
+        .catch(() => {
+          setUsers((u) =>
+            u.map((row) =>
+              row.id === next.id ? { ...row, unread_count: prevUnread } : row,
+            ),
+          );
         });
-
-        if (response.ok) {
-          const result = await response.json();
-          console.log(`Marked ${result.markedCount} messages as read`);
-        } else {
-          console.error('Failed to mark messages as read');
-          // Revert unread count if API fails
-          setUsers(prev => prev.map(u => 
-            u.id === selectedUser.id 
-              ? { ...u, unread_count: selectedUser.unread_count }
-              : u
-          ));
-        }
-      } catch (error) {
-        console.error('Error marking messages as read:', error);
-        // Revert unread count if API fails
-        setUsers(prev => prev.map(u => 
-          u.id === selectedUser.id 
-            ? { ...u, unread_count: selectedUser.unread_count }
-            : u
-        ));
-      }
-    }
-
-    if (!isMobile) {
-      setShowChat(true);
-    } else {
-      setShowChat(true);
     }
   };
 
@@ -894,7 +885,10 @@ export default function ChatPage() {
     }
   };
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (
+    content: string,
+    options?: { quotedMessageId?: string },
+  ) => {
     // Check if we're broadcasting to a group or sending to a single user
     if (broadcastGroupId && broadcastGroupName) {
       await handleSendBroadcast(content);
@@ -936,6 +930,9 @@ export default function ChatPage() {
         body: JSON.stringify({
           to: selectedUser.id,
           message: content,
+          ...(options?.quotedMessageId
+            ? { quotedMessageId: options.quotedMessageId }
+            : {}),
         }),
       });
 
@@ -997,6 +994,35 @@ export default function ChatPage() {
       setSendingMessage(false);
     }
   };
+
+  const handleSendReaction = useCallback(
+    async (messageId: string, emoji: string) => {
+      if (!selectedUser || broadcastGroupId) return;
+      try {
+        const response = await fetch('/api/send-reaction', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: selectedUser.id,
+            messageId,
+            emoji,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            typeof result.error === 'string'
+              ? result.error
+              : 'Failed to send reaction',
+          );
+        }
+      } catch (e) {
+        console.error('Send reaction:', e);
+        alert(e instanceof Error ? e.message : 'Failed to send reaction');
+      }
+    },
+    [selectedUser, broadcastGroupId],
+  );
 
   // Show loading state while checking setup
   if (!user || checkingSetup) {
@@ -1081,7 +1107,10 @@ export default function ChatPage() {
               selectedUser={selectedUser}
               messages={messages}
               onSendMessage={handleSendMessage}
+              messagingProvider={messagingProvider}
+              onSendReaction={handleSendReaction}
               isLoading={sendingMessage}
+              isMessagesLoading={threadLoading && !broadcastGroupName}
               onUpdateName={handleUpdateName}
               onUsersUpdate={refreshUsers}
               onMessageDeleted={(id) =>
@@ -1123,6 +1152,8 @@ export default function ChatPage() {
                 selectedUser={selectedUser}
                 messages={messages}
                 onSendMessage={handleSendMessage}
+                messagingProvider={messagingProvider}
+                onSendReaction={handleSendReaction}
                 onMessageDeleted={(id) =>
                   id === "__clear_all__" ? setMessages([]) : setMessages((prev) => prev.filter((m) => m.id !== id))
                 }
@@ -1133,6 +1164,7 @@ export default function ChatPage() {
                 }}
                 isMobile={true}
                 isLoading={sendingMessage}
+                isMessagesLoading={threadLoading && !broadcastGroupName}
                 onUpdateName={handleUpdateName}
                 onUsersUpdate={refreshUsers}
                 broadcastGroupName={broadcastGroupName}

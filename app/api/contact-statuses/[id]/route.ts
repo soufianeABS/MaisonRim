@@ -52,7 +52,7 @@ export async function PATCH(
     const color = typeof b.color === "string" ? b.color.trim() : "";
     if (!isHexColor(color)) {
       return NextResponse.json(
-        { error: "Color must be a hex value like #22c55e." },
+        { error: "Color must be a hex value like #10b981." },
         { status: 400 },
       );
     }

@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse request body
-    const { to, message } = await request.json();
+    const { to, message, quotedMessageId } = await request.json();
 
     // Validate required parameters
     if (!to || !message) {
@@ -90,11 +90,22 @@ export async function POST(request: NextRequest) {
       const endpoint = `${greenApiUrl.replace(/\/+$/, '')}/waInstance${idInstance}/sendMessage/${apiTokenInstance}`;
       const chatId = `${cleanPhoneNumber}@c.us`;
 
-      const greenPayload = {
+      const greenPayload: {
+        chatId: string;
+        message: string;
+        linkPreview: boolean;
+        quotedMessageId?: string;
+      } = {
         chatId,
         message,
         linkPreview: false,
       };
+      if (
+        typeof quotedMessageId === 'string' &&
+        quotedMessageId.trim().length > 0
+      ) {
+        greenPayload.quotedMessageId = quotedMessageId.trim();
+      }
 
       console.log('Sending message via Green API:', {
         chatId,
@@ -145,12 +156,20 @@ export async function POST(request: NextRequest) {
 
       const whatsappApiUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
 
-      const messageData = {
+      const messageData: Record<string, unknown> = {
         messaging_product: 'whatsapp',
         to: cleanPhoneNumber,
         type: 'text',
         text: { body: message },
       };
+      if (
+        typeof quotedMessageId === 'string' &&
+        quotedMessageId.trim().length > 0
+      ) {
+        messageData.context = {
+          message_id: quotedMessageId.trim(),
+        };
+      }
 
       console.log('Sending message to WhatsApp API:', {
         to: cleanPhoneNumber,
@@ -214,6 +233,11 @@ export async function POST(request: NextRequest) {
 
     console.log('Message sent successfully:', { provider, messageId });
 
+    const quoted =
+      typeof quotedMessageId === 'string' && quotedMessageId.trim().length > 0
+        ? quotedMessageId.trim()
+        : undefined;
+
     // Prepare message object for database insertion
     // Note: sender_id is phone number (TEXT), receiver_id is auth user (UUID)
     const messageObject = {
@@ -225,7 +249,10 @@ export async function POST(request: NextRequest) {
       is_sent_by_me: true,
       is_read: true, // Outgoing messages are already "read" by the sender
       message_type: 'text', // For now, we only send text messages
-      media_data: JSON.stringify({ provider }) // Track provider
+      media_data: JSON.stringify({
+        provider,
+        ...(quoted ? { quoted_message_id: quoted } : {}),
+      }),
     };
 
     console.log('Storing message in database:', {

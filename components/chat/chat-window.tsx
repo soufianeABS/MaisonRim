@@ -4,8 +4,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2 } from "lucide-react";
+import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2, Reply } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchContactStatusesCached } from "@/lib/contact-statuses-cache";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -115,11 +116,21 @@ interface MediaFile {
 interface ChatWindowProps {
   selectedUser: ChatUser | null;
   messages: Message[];
-  onSendMessage: (content: string) => void;
+  /** Optional reply — `quotedMessageId` is the WhatsApp / Green message id to quote. */
+  onSendMessage: (
+    content: string,
+    options?: { quotedMessageId?: string },
+  ) => void;
+  /** When set, show Reply / React on messages (1:1 only; hidden for broadcast). */
+  messagingProvider?: "whatsapp_cloud" | "green_api" | null;
+  /** Send emoji reaction to an existing message (provider-specific API). */
+  onSendReaction?: (messageId: string, emoji: string) => Promise<void>;
   onBack?: () => void;
   onClose?: () => void;
   isMobile?: boolean;
   isLoading?: boolean;
+  /** True while the 1:1 thread is loading from the server (no cached prefetch). */
+  isMessagesLoading?: boolean;
   onUpdateName?: (userId: string, customName: string) => Promise<void>;
   onUsersUpdate?: () => void;
   broadcastGroupName?: string | null;
@@ -127,14 +138,19 @@ interface ChatWindowProps {
   onMessageDeleted?: (messageId: string) => void;
 }
 
+const QUICK_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
 export function ChatWindow({ 
   selectedUser, 
   messages, 
   onSendMessage, 
+  messagingProvider = null,
+  onSendReaction,
   onBack, 
   onClose,
   isMobile = false,
   isLoading = false,
+  isMessagesLoading = false,
   onUpdateName,
   onUsersUpdate,
   broadcastGroupName,
@@ -170,7 +186,15 @@ export function ChatWindow({
   );
   const [devTextInbound, setDevTextInbound] = useState("");
   const [devTextOutbound, setDevTextOutbound] = useState("");
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [reactionBusyId, setReactionBusyId] = useState<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  /** Wraps the message list; height grows when images load — observe for scroll correction. */
+  const messagesInnerRef = useRef<HTMLDivElement>(null);
+  /** Bottom-of-list marker: when pinned, if this leaves the scrollport (e.g. images grew), snap back down. */
+  const messagesBottomSentinelRef = useRef<HTMLDivElement>(null);
+  /** If true, keep pinned to bottom when content height changes (images, late layout). */
+  const stickToBottomRef = useRef(true);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
 
@@ -201,10 +225,8 @@ export function ChatWindow({
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch("/api/contact-statuses", { cache: "no-store" });
-        const data = await res.json();
-        if (!res.ok || cancelled) return;
-        const statuses = Array.isArray(data.statuses) ? data.statuses : [];
+        const statuses = await fetchContactStatusesCached();
+        if (cancelled) return;
         const s = statuses.find((x: { id: string }) => x.id === sid) as
           | { rule_mode?: string | null; rule?: string | null }
           | undefined;
@@ -532,12 +554,89 @@ export function ChatWindow({
   );
   const hasUnreadMessages = unreadMessages.length > 0;
 
+  const scrollMessagesToBottom = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const onMessagesScroll = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const threshold = 120;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distFromBottom <= threshold;
+  }, []);
+
+  /** After layout/paint (e.g. image decode) — double rAF so scrollHeight matches final layout. */
+  const ensurePinnedToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!stickToBottomRef.current) return;
+        const el = messagesContainerRef.current;
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+      });
+    });
+  }, []);
+
+  // New conversation / broadcast: always start pinned to bottom.
+  useEffect(() => {
+    stickToBottomRef.current = true;
+  }, [selectedUser?.id, broadcastGroupName]);
+
+  useEffect(() => {
+    setReplyingTo(null);
+  }, [selectedUser?.id, broadcastGroupName]);
+
   // Snap to bottom when opening a conversation or when the list grows (instant, before paint — no scroll animation)
   useLayoutEffect(() => {
     if (messages.length === 0) return;
-    const el = messagesContainerRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [selectedUser?.id, broadcastGroupName, messages.length]);
+    scrollMessagesToBottom();
+    stickToBottomRef.current = true;
+  }, [selectedUser?.id, broadcastGroupName, messages.length, scrollMessagesToBottom]);
+
+  // Images and media load after paint — inner column grows; keep bottom aligned if user is still “at bottom”.
+  useEffect(() => {
+    const outer = messagesContainerRef.current;
+    const inner = messagesInnerRef.current;
+    if (!outer || !inner || messages.length === 0) return;
+
+    const ro = new ResizeObserver(() => {
+      if (!stickToBottomRef.current) return;
+      requestAnimationFrame(() => {
+        if (!stickToBottomRef.current) return;
+        outer.scrollTop = outer.scrollHeight;
+      });
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [
+    selectedUser?.id,
+    broadcastGroupName,
+    messages.length,
+    isMessagesLoading,
+  ]);
+
+  // When content grows below the fold (images, video poster), sentinel can leave the scrollport — snap if still pinned.
+  useEffect(() => {
+    const root = messagesContainerRef.current;
+    const sentinel = messagesBottomSentinelRef.current;
+    if (!root || !sentinel || messages.length === 0) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry || !stickToBottomRef.current) return;
+        if (!entry.isIntersecting) {
+          root.scrollTop = root.scrollHeight;
+        }
+      },
+      { root, rootMargin: "0px", threshold: 0 },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [selectedUser?.id, broadcastGroupName, messages.length, isMessagesLoading]);
 
   // Handle ESC key press within the chat window
   useEffect(() => {
@@ -607,7 +706,8 @@ export function ChatWindow({
     ) {
       return;
     }
-    onSendMessage(messageInput.trim());
+    onSendMessage(messageInput.trim(), replyingTo ? { quotedMessageId: replyingTo.id } : undefined);
+    setReplyingTo(null);
     setMessageInput("");
     requestAnimationFrame(() => {
       messageInputRef.current?.focus();
@@ -620,12 +720,19 @@ export function ChatWindow({
     isLoading,
     sendingMedia,
     onSendMessage,
+    replyingTo,
     adjustMessageInputHeight,
   ]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     commitSend();
+  };
+
+  const replyPreviewSnippet = (m: Message) => {
+    const t = (m.content ?? "").trim();
+    if (!t) return "(no text)";
+    return t.length > 80 ? `${t.slice(0, 77)}…` : t;
   };
 
   const handleMessageInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1023,6 +1130,7 @@ export function ChatWindow({
       newSet.delete(messageId);
       return newSet;
     });
+    ensurePinnedToBottom();
   };
 
   const handleMediaLoadStart = (messageId: string) => {
@@ -1896,9 +2004,16 @@ export function ChatWindow({
       {/* Messages Area */}
       <div 
         ref={messagesContainerRef}
+        onScroll={onMessagesScroll}
+        style={{ overflowAnchor: "none" }}
         className="flex-1 overflow-y-auto p-4 bg-gradient-to-b from-emerald-50/40 to-blue-50/30 dark:from-emerald-950/15 dark:to-blue-950/10"
       >
-        {Object.keys(groupedMessages).length === 0 ? (
+        {!broadcastGroupName && isMessagesLoading && messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
+            <Loader2 className="h-6 w-6 animate-spin opacity-60" aria-hidden />
+            <p className="text-xs">Loading…</p>
+          </div>
+        ) : Object.keys(groupedMessages).length === 0 ? (
           // No messages - show appropriate placeholder
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
             {broadcastGroupName ? (
@@ -1921,7 +2036,7 @@ export function ChatWindow({
             )}
           </div>
         ) : (
-          <div className="space-y-4">
+          <div ref={messagesInnerRef} className="space-y-4">
             {Object.entries(groupedMessages).map(([date, dayMessages]) => (
               <div key={date}>
                 {/* Date Separator */}
@@ -1933,30 +2048,15 @@ export function ChatWindow({
 
                 {/* Messages for this date */}
                 <div className="space-y-3">
-                  {dayMessages.map((message, index) => {
+                  {dayMessages.map((message) => {
                     // Use is_sent_by_me field instead of comparing IDs to determine message ownership
                     const isOwn = message.is_sent_by_me;
-                    
-                    // Debug logging to help identify the issue
-                    if (!isOwn && message.content && !message.content.startsWith('[')) {
-                      console.log('Message alignment check:', {
-                        id: message.id,
-                        is_sent_by_me: message.is_sent_by_me,
-                        sender_id: message.sender_id,
-                        receiver_id: message.receiver_id,
-                        content: message.content.substring(0, 30)
-                      });
-                    }
-                    
+
                     const globalIndex = messages.findIndex(m => m.id === message.id);
                     const isFirstUnread = globalIndex === firstUnreadIndex;
-                    const isNewMessage = index === dayMessages.length - 1 && dayMessages.length > 0;
-                    
+
                     return (
-                      <div 
-                        key={message.id}
-                        className={`${isNewMessage ? 'animate-fade-in-up' : ''}`}
-                      >
+                      <div key={message.id}>
                         {/* Unread messages indicator */}
                         {isFirstUnread && hasUnreadMessages && (
                           <div 
@@ -1971,7 +2071,7 @@ export function ChatWindow({
                         )}
                         
                         <div
-                          className={`flex items-start gap-1 ${isOwn ? "justify-end" : "justify-start"}`}
+                          className={`group flex items-start gap-1 ${isOwn ? "justify-end" : "justify-start"}`}
                         >
                           {isLocalhostDev &&
                             !message.id.startsWith("optimistic_") && (
@@ -1989,7 +2089,52 @@ export function ChatWindow({
                                 )}
                               </button>
                             )}
-                          {renderMessageContent(message, isOwn)}
+                          <div
+                            className={`flex min-w-0 flex-col gap-1 ${isOwn ? "items-end" : "items-start"}`}
+                          >
+                            {messagingProvider &&
+                              !broadcastGroupName &&
+                              !message.id.startsWith("optimistic_") && (
+                                <div
+                                  className={`flex flex-wrap items-center gap-0.5 px-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 ${isOwn ? "justify-end" : "justify-start"}`}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setReplyingTo(message);
+                                      messageInputRef.current?.focus();
+                                    }}
+                                    className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    title="Reply"
+                                  >
+                                    <Reply className="h-4 w-4" />
+                                  </button>
+                                  {onSendReaction &&
+                                    QUICK_REACTION_EMOJIS.map((em) => (
+                                      <button
+                                        key={`${message.id}-${em}`}
+                                        type="button"
+                                        disabled={reactionBusyId === message.id}
+                                        onClick={() => {
+                                          void (async () => {
+                                            setReactionBusyId(message.id);
+                                            try {
+                                              await onSendReaction(message.id, em);
+                                            } finally {
+                                              setReactionBusyId(null);
+                                            }
+                                          })();
+                                        }}
+                                        className="rounded px-1 py-0.5 text-base leading-none hover:bg-muted disabled:opacity-50"
+                                        title={`React ${em}`}
+                                      >
+                                        {em}
+                                      </button>
+                                    ))}
+                                </div>
+                              )}
+                            {renderMessageContent(message, isOwn)}
+                          </div>
                         </div>
                       </div>
                     );
@@ -1997,12 +2142,38 @@ export function ChatWindow({
                 </div>
               </div>
             ))}
+            <div
+              ref={messagesBottomSentinelRef}
+              className="h-px w-full shrink-0 pointer-events-none"
+              aria-hidden
+            />
           </div>
         )}
       </div>
 
       {/* Message Input */}
-      <div className="p-4 border-t border-border bg-background">
+      <div className="border-t border-border bg-background">
+        {replyingTo && (
+          <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-2 text-sm">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                Replying to
+              </p>
+              <p className="truncate text-muted-foreground">{replyPreviewSnippet(replyingTo)}</p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              onClick={() => setReplyingTo(null)}
+              aria-label="Cancel reply"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+        <div className="p-4">
         <form onSubmit={handleSendMessage} className="flex gap-3 items-end">
           {/* Hide media button in broadcast mode, show template button */}
           {!broadcastGroupName && (
@@ -2059,6 +2230,7 @@ export function ChatWindow({
             )}
           </Button>
         </form>
+        </div>
       </div>
 
       {/* Drag and Drop Overlay */}

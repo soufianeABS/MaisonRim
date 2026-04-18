@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
+import { fetchContactStatusesCached } from "@/lib/contact-statuses-cache";
 
 interface ChatUser {
   id: string;
@@ -89,11 +90,10 @@ export function UserInfoDialog({
     const load = async () => {
       setStatusesLoading(true);
       try {
-        const res = await fetch("/api/contact-statuses");
-        const data = await res.json();
-        if (res.ok) {
-          setStatuses(data.statuses ?? []);
-        }
+        const list = await fetchContactStatusesCached();
+        setStatuses(list);
+      } catch {
+        setStatuses([]);
       } finally {
         setStatusesLoading(false);
       }

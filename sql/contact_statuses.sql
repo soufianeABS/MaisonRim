@@ -27,7 +27,7 @@ create table if not exists public.contact_statuses (
   updated_at timestamptz not null default now(),
   constraint contact_statuses_name_len check (char_length(name) between 1 and 120),
   constraint contact_statuses_rule_len check (char_length(rule) <= 4000),
-  -- Accept hex colors like #22c55e
+  -- Accept hex colors like #10b981
   constraint contact_statuses_color_hex check (color ~ '^#[0-9a-fA-F]{6}$')
 );
 
