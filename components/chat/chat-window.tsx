@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -170,9 +170,7 @@ export function ChatWindow({
   );
   const [devTextInbound, setDevTextInbound] = useState("");
   const [devTextOutbound, setDevTextOutbound] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const unreadIndicatorRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
 
@@ -534,25 +532,12 @@ export function ChatWindow({
   );
   const hasUnreadMessages = unreadMessages.length > 0;
 
-  // Auto-scroll to unread messages or bottom
-  useEffect(() => {
-    // Only scroll if we have messages
+  // Snap to bottom when opening a conversation or when the list grows (instant, before paint — no scroll animation)
+  useLayoutEffect(() => {
     if (messages.length === 0) return;
-    
-    // Small delay to ensure DOM is updated
-    const scrollTimer = setTimeout(() => {
-      if (hasUnreadMessages && firstUnreadIndex !== -1) {
-        // Scroll to first unread message on initial load
-        unreadIndicatorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      } else {
-        // Scroll to bottom for new messages or when no unread messages
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-      }
-    }, 50);
-
-    return () => clearTimeout(scrollTimer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length]); // Only depend on messages.length to avoid unnecessary scrolls
+    const el = messagesContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [selectedUser?.id, broadcastGroupName, messages.length]);
 
   // Handle ESC key press within the chat window
   useEffect(() => {
@@ -1975,7 +1960,6 @@ export function ChatWindow({
                         {/* Unread messages indicator */}
                         {isFirstUnread && hasUnreadMessages && (
                           <div 
-                            ref={unreadIndicatorRef}
                             className="flex items-center justify-center my-4 animate-fade-in"
                           >
                             <div className="flex-1 h-px bg-red-500"></div>
@@ -2013,7 +1997,6 @@ export function ChatWindow({
                 </div>
               </div>
             ))}
-            <div ref={messagesEndRef} />
           </div>
         )}
       </div>
