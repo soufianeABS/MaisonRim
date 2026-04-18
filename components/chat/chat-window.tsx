@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MediaUpload } from "./media-upload";
+import { ImageViewerDialog } from "./image-viewer-dialog";
 import { UserInfoDialog } from "./user-info-dialog";
 import { TemplateSelector } from "./template-selector";
 import { SavedMessagePicker } from "./saved-message-picker";
@@ -323,6 +324,11 @@ export function ChatWindow({
   /** Mobile: which message shows the quick-reaction emoji row (desktop uses hover). */
   const [reactionEmojiMenuMessageId, setReactionEmojiMenuMessageId] = useState<string | null>(null);
   const [composerEmojiPickerOpen, setComposerEmojiPickerOpen] = useState(false);
+  const [imageViewer, setImageViewer] = useState<{
+    url: string;
+    filename: string;
+    messageId: string;
+  } | null>(null);
   const [composerEmojiUsage, setComposerEmojiUsage] = useState<Record<string, number>>({});
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   /** Wraps the message list; height grows when images load — observe for scroll correction. */
@@ -1196,6 +1202,17 @@ export function ChatWindow({
     }
   };
 
+  const sendEditedImageFromViewer = async (file: File) => {
+    await handleSendMedia([
+      {
+        id: crypto.randomUUID(),
+        file,
+        type: "image",
+        caption: "",
+      },
+    ]);
+  };
+
   const handleUpdateName = async (userId: string, customName: string) => {
     if (onUpdateName) {
       await onUpdateName(userId, customName);
@@ -1327,20 +1344,33 @@ export function ChatWindow({
     }
   };
 
-  const downloadMedia = async (url: string, filename: string) => {
+  const downloadMedia = async (url: string, filename: string, messageId?: string) => {
     try {
-      // For S3 pre-signed URLs, we can download directly
-      const response = await fetch(url, {
-        method: 'GET',
-        mode: 'cors',
-        credentials: 'omit',
-      });
+      const response =
+        messageId &&
+        (await fetch("/api/media/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messageId, filename }),
+        }).catch(() => null));
 
-      if (!response.ok) {
-        throw new Error(`Failed to download: ${response.status} ${response.statusText}`);
+      const useProxy = response && response.ok;
+      const finalResponse =
+        useProxy && response
+          ? response
+          : await fetch(url, {
+              method: "GET",
+              mode: "cors",
+              credentials: "omit",
+            });
+
+      if (!finalResponse.ok) {
+        throw new Error(
+          `Failed to download: ${finalResponse.status} ${finalResponse.statusText}`,
+        );
       }
 
-      const blob = await response.blob();
+      const blob = await finalResponse.blob();
       
       // Create download link
       const downloadUrl = window.URL.createObjectURL(blob);
@@ -1497,7 +1527,16 @@ export function ChatWindow({
                   height={200}
                   className="max-w-[300px] max-h-[400px] w-auto h-auto object-cover cursor-pointer rounded-xl"
                   style={{ maxWidth: '100%', height: 'auto' }}
-                  onClick={() => window.open(effectiveMediaUrl, '_blank')}
+                  onClick={() =>
+                    setImageViewer({
+                      url: effectiveMediaUrl,
+                      filename:
+                        (typeof mediaData?.filename === "string" &&
+                          mediaData.filename) ||
+                        `image-${message.id.slice(0, 8)}.jpg`,
+                      messageId: message.id,
+                    })
+                  }
                   onLoadingComplete={() => handleMediaLoad(message.id)}
                   onLoadStart={() => handleMediaLoadStart(message.id)}
                   onError={() => {
@@ -1576,7 +1615,13 @@ export function ChatWindow({
                   size="sm"
                   variant="ghost"
                   className={`p-2 h-10 w-10 ${isOwn ? 'hover:bg-emerald-800/40' : 'hover:bg-gray-200'}`}
-                  onClick={() => downloadMedia(effectiveMediaUrl, mediaData?.filename || 'document')}
+                  onClick={() =>
+                    downloadMedia(
+                      effectiveMediaUrl,
+                      mediaData?.filename || "document",
+                      message.id,
+                    )
+                  }
                   disabled={isRefreshing}
                 >
                   {isRefreshing ? (
@@ -2697,6 +2742,21 @@ export function ChatWindow({
           onInitialFilesConsumed={clearMediaUploadInitialFiles}
         />
       )}
+
+      <ImageViewerDialog
+        isOpen={!!imageViewer}
+        onClose={() => setImageViewer(null)}
+        imageUrl={imageViewer?.url ?? ""}
+        downloadFilename={imageViewer?.filename ?? "image"}
+        messageId={imageViewer?.messageId}
+        onDownload={downloadMedia}
+        onSendEdited={
+          selectedUser && !broadcastGroupName
+            ? sendEditedImageFromViewer
+            : undefined
+        }
+        sending={sendingMedia}
+      />
 
       {/* Meta message templates (WhatsApp Cloud only in practice) */}
       {(selectedUser || broadcastGroupName) &&
