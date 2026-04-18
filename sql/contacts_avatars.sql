@@ -4,8 +4,10 @@
 ALTER TABLE IF EXISTS public.contacts
   ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 
--- Update view to include avatar_url
-CREATE OR REPLACE VIEW public.contact_conversations AS
+-- Replace view (CREATE OR REPLACE cannot add/reorder columns — drop first)
+DROP VIEW IF EXISTS public.contact_conversations CASCADE;
+
+CREATE VIEW public.contact_conversations AS
 WITH my_messages AS (
   SELECT *
   FROM public.messages
@@ -20,12 +22,16 @@ unread_counts AS (
   GROUP BY sender_id
 ),
 latest_messages AS (
+  /* sender_id is always the contact phone; last message "from" uses is_sent_by_me. */
   SELECT DISTINCT ON (sender_id)
     sender_id,
     content,
     message_type,
     timestamp AS last_message_time,
-    sender_id AS last_message_sender
+    CASE
+      WHEN COALESCE(is_sent_by_me, false) THEN (SELECT auth.uid()::text)
+      ELSE sender_id
+    END AS last_message_sender
   FROM my_messages
   ORDER BY sender_id, timestamp DESC
 )

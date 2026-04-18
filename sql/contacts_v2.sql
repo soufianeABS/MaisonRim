@@ -101,7 +101,9 @@ on conflict (owner_id, phone) do nothing;
 -- -----------------------------------------------------------------------------
 -- Conversations view (owner-scoped) with optional status join if present
 -- -----------------------------------------------------------------------------
-create or replace view public.contact_conversations as
+drop view if exists public.contact_conversations cascade;
+
+create view public.contact_conversations as
 with my_messages as (
   select *
   from public.messages
@@ -116,12 +118,16 @@ unread_counts as (
   group by sender_id
 ),
 latest_messages as (
+  /* sender_id is always the contact phone; direction is is_sent_by_me. */
   select distinct on (sender_id)
     sender_id,
     content,
     message_type,
     timestamp as last_message_time,
-    sender_id as last_message_sender
+    case
+      when coalesce(is_sent_by_me, false) then (select auth.uid()::text)
+      else sender_id
+    end as last_message_sender
   from my_messages
   order by sender_id, timestamp desc
 )

@@ -362,7 +362,7 @@ export default function ChatPage() {
                   last_message: message.content || '',
                   last_message_time: message.timestamp,
                   last_message_type: message.message_type || 'text',
-                  last_message_sender: message.sender_id,
+                  last_message_sender: isFromMe ? (user?.id ?? '') : message.sender_id,
                   // Increment unread count only if message is from other user and not currently viewing
                   unread_count: shouldIncrementUnread ? (u.unread_count || 0) + 1 : u.unread_count
                 };

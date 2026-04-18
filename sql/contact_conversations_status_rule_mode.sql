@@ -1,7 +1,12 @@
 -- Expose contact status rule_mode in contact_conversations (for UI: enable Suggest reply on Hard without messages).
 -- Run in Supabase SQL Editor (safe to re-run).
+--
+-- PostgreSQL does not allow CREATE OR REPLACE VIEW to add/reorder/rename columns; doing so yields
+-- "cannot change name of view column ...". Drop first, then create.
 
-CREATE OR REPLACE VIEW public.contact_conversations AS
+DROP VIEW IF EXISTS public.contact_conversations CASCADE;
+
+CREATE VIEW public.contact_conversations AS
 WITH my_messages AS (
   SELECT *
   FROM public.messages
@@ -16,12 +21,16 @@ unread_counts AS (
   GROUP BY sender_id
 ),
 latest_messages AS (
+  /* sender_id is always the contact phone in this schema; direction is is_sent_by_me. */
   SELECT DISTINCT ON (sender_id)
     sender_id,
     content,
     message_type,
     timestamp AS last_message_time,
-    sender_id AS last_message_sender
+    CASE
+      WHEN COALESCE(is_sent_by_me, false) THEN (SELECT auth.uid()::text)
+      ELSE sender_id
+    END AS last_message_sender
   FROM my_messages
   ORDER BY sender_id, timestamp DESC
 )
