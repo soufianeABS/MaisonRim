@@ -106,6 +106,9 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
     | { ok: true; chatsProcessed: number; messagesUpserted: number; mediaStored: number }
     | { ok: false; error: string }
   >(null);
+
+  /** Filter conversations by who sent the most recent message (requires last_message_sender). */
+  const [lastReplyFilter, setLastReplyFilter] = useState<"all" | "client" | "me">("all");
   
   // Groups state
   const [groups, setGroups] = useState<Group[]>([]);
@@ -186,6 +189,15 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
     }
   };
 
+  const matchesLastReplyFilter = (user: ChatUser) => {
+    if (lastReplyFilter === "all") return true;
+    const hasAnyMessage = Boolean(user.last_message || user.last_message_type);
+    if (!hasAnyMessage) return false;
+    const sender = user.last_message_sender;
+    if (lastReplyFilter === "me") return sender === currentUserId;
+    return Boolean(sender && sender !== currentUserId);
+  };
+
   const getMessagePreview = (user: ChatUser) => {
     if (!user.last_message && !user.last_message_type) {
       return "No messages yet";
@@ -240,7 +252,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
     const matchesSearch = searchableText.includes(searchTerm.toLowerCase());
     const effectiveStatusId = (statusOverrides[user.id]?.status_id ?? user.status_id) || null;
     const matchesStatus = selectedStatusId ? effectiveStatusId === selectedStatusId : true;
-    return matchesSearch && matchesStatus;
+    return matchesSearch && matchesStatus && matchesLastReplyFilter(user);
   });
 
   const assignContactStatus = async (contactId: string, statusId: string | null) => {
@@ -860,7 +872,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
       </div>
 
       {/* Search */}
-      <div className="p-4 border-b border-border">
+      <div className="p-4 border-b border-border space-y-3">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
           <input
@@ -870,6 +882,34 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-green-500"
           />
+        </div>
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Last message
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {(
+              [
+                { id: "all" as const, label: "All" },
+                { id: "client" as const, label: "Client" },
+                { id: "me" as const, label: "You" },
+              ]
+            ).map((opt) => (
+              <Button
+                key={opt.id}
+                type="button"
+                variant={lastReplyFilter === opt.id ? "default" : "outline"}
+                size="sm"
+                className="h-7 px-2.5 text-xs rounded-md"
+                onClick={() => setLastReplyFilter(opt.id)}
+              >
+                {opt.label}
+              </Button>
+            ))}
+          </div>
+          <p className="text-[10px] text-muted-foreground leading-snug">
+            Client = last message from the contact. You = last message you sent from this app.
+          </p>
         </div>
       </div>
 
@@ -890,8 +930,10 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
       <div className="flex-1 overflow-y-auto">
         {filteredUsers.length === 0 ? (
           <div className="p-4 text-center text-muted-foreground">
-            {searchTerm ? "No conversations found" : "No conversations yet"}
-            {!searchTerm && (
+            {searchTerm || lastReplyFilter !== "all" || selectedStatusId
+              ? "No conversations match your filters"
+              : "No conversations yet"}
+            {!searchTerm && lastReplyFilter === "all" && !selectedStatusId && (
               <div className="mt-4">
                 <Button
                   onClick={() => setShowNewChat(true)}
