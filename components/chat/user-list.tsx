@@ -113,7 +113,7 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
 
   /** Tags filter: folded shows only the active tag; expand to pick another. */
   const [tagsExpanded, setTagsExpanded] = useState(false);
-  
+
   // Groups state
   const [groups, setGroups] = useState<Group[]>([]);
   const [showGroupDialog, setShowGroupDialog] = useState(false);
@@ -981,9 +981,14 @@ export function UserList({ users, selectedUser, onUserSelect, currentUserId, onU
           filteredUsers.map((user) => (
             <div
               key={user.id}
-              className={`p-4 border-b border-border cursor-pointer hover:bg-muted/50 transition-all duration-200 ${
-                selectedUser?.id === user.id ? "bg-muted" : ""
-              }`}
+              className={cn(
+                "border-b border-border p-4 cursor-pointer select-none",
+                "transition-[transform,box-shadow,background-color] duration-200 ease-out",
+                "hover:bg-muted/50 active:scale-[0.99] active:bg-muted/70",
+                selectedUser?.id === user.id &&
+                  "bg-muted ring-2 ring-inset ring-green-500/55 shadow-[inset_0_1px_0_0_rgba(34,197,94,0.15)]"
+              )}
+              aria-current={selectedUser?.id === user.id ? "true" : undefined}
               onClick={() => onUserSelect(user)}
             >
               <div className="flex items-center gap-3">
