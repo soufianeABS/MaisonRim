@@ -53,6 +53,23 @@ interface MessagePayload {
 }
 
 /**
+ * Supabase Realtime often delivers JSON/JSONB columns as parsed objects; RPC SELECT
+ * usually returns strings. Normalize so the chat UI always gets a JSON string for media_data.
+ */
+function normalizeMessageMediaData(media_data: unknown): string | null {
+  if (media_data == null) return null;
+  if (typeof media_data === "string") return media_data;
+  if (typeof media_data === "object") {
+    try {
+      return JSON.stringify(media_data);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
  * Outgoing API/webhook rows store sender_id = contact phone and receiver_id = business user for
  * both directions; use DB is_sent_by_me when present.
  */
@@ -115,6 +132,7 @@ export default function ChatPage() {
       return (rows as (MessagePayload & { message_timestamp?: string })[]).map(
         (msg) => ({
           ...msg,
+          media_data: normalizeMessageMediaData(msg.media_data),
           timestamp: msg.message_timestamp || msg.timestamp,
           is_sent_by_me: isMessageFromCurrentUser(msg, user.id),
         }),
@@ -486,6 +504,7 @@ export default function ChatPage() {
           const sentByMe = isMessageFromCurrentUser(newMessage, user.id);
           const messageWithFlag: Message = {
             ...newMessage,
+            media_data: normalizeMessageMediaData(newMessage.media_data),
             is_sent_by_me: sentByMe,
             timestamp: newMessage.timestamp || new Date().toISOString()
           };
@@ -542,6 +561,7 @@ export default function ChatPage() {
         if (isRelevantMessage) {
           const messageWithFlag: Message = {
             ...updatedMessage,
+            media_data: normalizeMessageMediaData(updatedMessage.media_data),
             is_sent_by_me: isMessageFromCurrentUser(updatedMessage, user.id),
             timestamp: updatedMessage.timestamp || new Date().toISOString()
           };
@@ -625,6 +645,7 @@ export default function ChatPage() {
             
             const messageWithFlag = {
               ...newMessage,
+              media_data: normalizeMessageMediaData(newMessage.media_data),
               is_sent_by_me: true,
               timestamp: newMessage.timestamp || new Date().toISOString()
             };

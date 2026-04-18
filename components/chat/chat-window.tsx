@@ -76,21 +76,29 @@ function parseQuotedRefFromMedia(message: Message): {
   id: string | null;
   preview?: string;
 } {
-  if (!message.media_data || typeof message.media_data !== "string") {
+  const raw = message.media_data;
+  if (raw == null) {
     return { id: null };
   }
+  let p: Record<string, unknown>;
   try {
-    const p = JSON.parse(message.media_data) as Record<string, unknown>;
-    const id =
-      typeof p.quoted_message_id === "string" ? p.quoted_message_id : null;
-    const preview =
-      typeof p.quoted_message_preview === "string"
-        ? p.quoted_message_preview
-        : undefined;
-    return id ? { id, preview } : { id: null };
+    if (typeof raw === "string") {
+      p = JSON.parse(raw) as Record<string, unknown>;
+    } else if (typeof raw === "object") {
+      p = raw as Record<string, unknown>;
+    } else {
+      return { id: null };
+    }
   } catch {
     return { id: null };
   }
+  const id =
+    typeof p.quoted_message_id === "string" ? p.quoted_message_id : null;
+  const preview =
+    typeof p.quoted_message_preview === "string"
+      ? p.quoted_message_preview
+      : undefined;
+  return id ? { id, preview } : { id: null };
 }
 
 function snippetForQuotedMessage(m: Message): string {
@@ -2192,6 +2200,7 @@ export function ChatWindow({
                           <div
                             className={`flex min-w-0 flex-col gap-1 ${isOwn ? "items-end" : "items-start"}`}
                           >
+                            {renderMessageContent(message, isOwn)}
                             {messagingProvider &&
                               !broadcastGroupName &&
                               !message.id.startsWith("optimistic_") && (
@@ -2233,7 +2242,6 @@ export function ChatWindow({
                                     ))}
                                 </div>
                               )}
-                            {renderMessageContent(message, isOwn)}
                           </div>
                         </div>
                       </div>
