@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2, Reply, Smile } from "lucide-react";
+import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2, Reply, Smile, Check } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchContactStatusesCached } from "@/lib/contact-statuses-cache";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
@@ -185,6 +185,51 @@ interface ChatWindowProps {
   broadcastGroupName?: string | null;
   /** Called after a message row is removed (e.g. localhost test delete) so parent state updates even if Realtime lags */
   onMessageDeleted?: (messageId: string) => void;
+}
+
+/** Green API outgoingMessageStatus → WhatsApp-style ticks on your bubbles */
+function GreenOutgoingTicks({ status }: { status: string | null }) {
+  const isRead = status === "read";
+  const isDelivered = status === "delivered" || isRead;
+  const isFailed = status === "failed";
+  const tickClass = isRead ? "text-sky-300" : "text-emerald-100/90";
+
+  if (isFailed) {
+    return (
+      <span
+        className="text-[10px] font-semibold text-amber-200"
+        title="Not delivered"
+        aria-label="Not delivered"
+      >
+        !
+      </span>
+    );
+  }
+
+  const label = isRead ? "Read" : isDelivered ? "Delivered" : "Sent";
+
+  if (isDelivered || isRead) {
+    return (
+      <span
+        className={`inline-flex items-center ${tickClass}`}
+        title={label}
+        aria-label={label}
+      >
+        <Check className="h-3.5 w-3.5 -mr-2" strokeWidth={2.5} />
+        <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`inline-flex items-center ${tickClass}`}
+      title={label}
+      aria-label={label}
+    >
+      <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+    </span>
+  );
 }
 
 const QUICK_REACTION_EMOJIS = ["👍", "😊", "❤️", "😂", "😮", "😢", "🙏"];
@@ -1471,6 +1516,33 @@ export function ChatWindow({
     setLoadingMedia(prev => new Set(prev).add(messageId));
   };
 
+  const messageTimestampRow = (message: Message, isOwn: boolean) => {
+    const showTicks =
+      messagingProvider === "green_api" &&
+      isOwn &&
+      !message.id.startsWith("optimistic_");
+    let greenStatus: string | null = null;
+    if (showTicks && message.media_data) {
+      try {
+        const md =
+          typeof message.media_data === "string"
+            ? (JSON.parse(message.media_data) as Record<string, unknown>)
+            : (message.media_data as Record<string, unknown>);
+        const s = md.green_recipient_status;
+        if (typeof s === "string") greenStatus = s.toLowerCase();
+      } catch {
+        /* ignore */
+      }
+    }
+    const color = isOwn ? "text-emerald-50/90" : "text-muted-foreground";
+    return (
+      <span className={`inline-flex items-center gap-1.5 ${color}`}>
+        <span>{formatTime(message.timestamp)}</span>
+        {showTicks && <GreenOutgoingTicks status={greenStatus} />}
+      </span>
+    );
+  };
+
   const renderMessageContent = (message: Message, isOwn: boolean) => {
     const messageType = message.message_type || 'text';
     let mediaData: MediaData | null = null;
@@ -1585,9 +1657,11 @@ export function ChatWindow({
                 {mediaData.caption}
               </p>
             )}
-            <span className={`text-xs block ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
-              {formatTime(message.timestamp)}
-            </span>
+            <div
+              className={`text-xs mt-0.5 flex w-full ${isOwn ? "justify-end" : "justify-start"}`}
+            >
+              {messageTimestampRow(message, isOwn)}
+            </div>
           </div>
         );
 
@@ -1643,9 +1717,11 @@ export function ChatWindow({
                 </Button>
               )}
             </div>
-            <span className={`text-xs block ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
-              {formatTime(message.timestamp)}
-            </span>
+            <div
+              className={`text-xs mt-0.5 flex w-full ${isOwn ? "justify-end" : "justify-start"}`}
+            >
+              {messageTimestampRow(message, isOwn)}
+            </div>
           </div>
         );
 
@@ -1718,9 +1794,11 @@ export function ChatWindow({
                 )}
               </div>
             </div>
-            <span className={`text-xs block ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
-              {formatTime(message.timestamp)}
-            </span>
+            <div
+              className={`text-xs mt-0.5 flex w-full ${isOwn ? "justify-end" : "justify-start"}`}
+            >
+              {messageTimestampRow(message, isOwn)}
+            </div>
           </div>
         );
 
@@ -1788,9 +1866,11 @@ export function ChatWindow({
                 {mediaData.caption}
               </p>
             )}
-            <span className={`text-xs mt-1 block ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
-              {formatTime(message.timestamp)}
-            </span>
+            <div
+              className={`text-xs mt-1 flex w-full ${isOwn ? "justify-end" : "justify-start"}`}
+            >
+              {messageTimestampRow(message, isOwn)}
+            </div>
           </div>
         );
 
@@ -1940,9 +2020,11 @@ export function ChatWindow({
             </div>
 
             {/* Timestamp */}
-            <span className={`text-xs mt-3 block ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
-              {formatTime(message.timestamp)}
-            </span>
+            <div
+              className={`text-xs mt-3 flex w-full ${isOwn ? "justify-end" : "justify-start"}`}
+            >
+              {messageTimestampRow(message, isOwn)}
+            </div>
           </div>
         );
 
@@ -1956,10 +2038,10 @@ export function ChatWindow({
             <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] leading-relaxed">
               {message.content}
             </p>
-            <div className="flex items-center gap-2 mt-2">
-              <span className={`text-xs ${isOwn ? 'text-emerald-50/90' : 'text-muted-foreground'}`}>
-                {formatTime(message.timestamp)}
-              </span>
+            <div
+              className={`flex items-center gap-2 mt-2 flex-wrap ${isOwn ? "justify-end" : "justify-start"}`}
+            >
+              {messageTimestampRow(message, isOwn)}
               {isOptimistic && isOwn && (
                 <span className="text-xs text-emerald-100 flex items-center gap-1">
                   <span className="inline-block w-1 h-1 bg-emerald-200 rounded-full animate-pulse"></span>

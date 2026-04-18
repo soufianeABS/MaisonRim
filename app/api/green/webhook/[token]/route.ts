@@ -134,6 +134,51 @@ export async function POST(
       return new NextResponse('OK', { status: 200 });
     }
 
+    // WhatsApp-style read receipts: Green sends outgoingMessageStatus (sent → delivered → read).
+    // Update existing row so the UI can show blue double-checks without relying on upsert (ignoreDuplicates).
+    if (isOutgoingStatus) {
+      const idMsg =
+        typeof body.idMessage === "string" && body.idMessage.length > 0 ? body.idMessage : null;
+      const stRaw = typeof body.status === "string" ? body.status.toLowerCase() : "";
+      if (
+        idMsg &&
+        ["sent", "delivered", "read", "failed"].includes(stRaw)
+      ) {
+        const { data: row } = await supabase
+          .from("messages")
+          .select("id, media_data, is_sent_by_me")
+          .eq("id", idMsg)
+          .eq("receiver_id", businessOwnerId)
+          .maybeSingle();
+        if (row?.is_sent_by_me) {
+          let md: Record<string, unknown> = {};
+          try {
+            if (row.media_data) {
+              md =
+                typeof row.media_data === "string"
+                  ? (JSON.parse(row.media_data as string) as Record<string, unknown>)
+                  : (row.media_data as Record<string, unknown>);
+            }
+          } catch {
+            md = {};
+          }
+          md.green_recipient_status = stRaw;
+          md.green_status_updated_at = new Date().toISOString();
+          const { error: upErr } = await supabase
+            .from("messages")
+            .update({ media_data: JSON.stringify(md) })
+            .eq("id", idMsg);
+          if (!upErr) {
+            console.log("Green webhook: recipient delivery status updated", {
+              idMsg,
+              st: stRaw,
+            });
+            return new NextResponse("OK", { status: 200 });
+          }
+        }
+      }
+    }
+
     const apiUrl = (userSettings as { green_api_url?: string | null }).green_api_url;
     const idInstance = (userSettings as { green_id_instance?: string | null }).green_id_instance;
     const apiTokenInstance = (userSettings as { green_api_token_instance?: string | null })
