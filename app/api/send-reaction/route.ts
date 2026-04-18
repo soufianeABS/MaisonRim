@@ -5,10 +5,15 @@ import { logWhatsAppGraphCall } from '@/lib/whatsapp-graph-debug';
 
 /**
  * POST — send an emoji reaction to a specific WhatsApp message.
- * WhatsApp Cloud: Graph API type "reaction" (native reaction).
- * Green API: there is no public sendReaction endpoint (404). We use sendMessage
- * with only the emoji + quotedMessageId — WhatsApp shows a quoted reply with an
- * emoji (not the same as a native reaction bubble, but it is supported by Green).
+ *
+ * **WhatsApp Cloud (Meta):** Graph API `type: "reaction"` — emoji sticks to the
+ * message bubble (same behavior as WhatsApp app reactions).
+ *
+ * **Green API:** There is no documented HTTP method to send that same "sticker"
+ * reaction. Official SendMessage only supports text + optional `quotedMessageId`,
+ * which produces a **quoted reply** whose body is the emoji — not a native
+ * bubble reaction. Receiving `reactionMessage` webhooks is supported; sending
+ * bubble reactions via REST is not documented as of Green's public API.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -135,7 +140,7 @@ export async function POST(request: NextRequest) {
         greenDelivery:
           'quoted_emoji_reply' as const,
         note:
-          'Green API has no public sendReaction HTTP method; this uses sendMessage with the emoji as the body and quotedMessageId (quoted reply, not a native reaction bubble).',
+          'Green API: emoji is sent with sendMessage + quotedMessageId (looks like a reply, not an app-style reaction). For native reactions use WhatsApp Cloud API.',
         providerResponse: greenData,
       });
     }

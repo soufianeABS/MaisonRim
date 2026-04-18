@@ -188,6 +188,17 @@ interface ChatWindowProps {
 
 const QUICK_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
+/** Green API has no documented send for WhatsApp bubble reactions — API uses quoted emoji reply only. */
+function quickReactionButtonTitle(
+  provider: ChatWindowProps["messagingProvider"],
+  emoji: string,
+): string {
+  if (provider === "green_api") {
+    return `Reply with ${emoji} (quoted message; Green API cannot attach sticker-style reactions)`;
+  }
+  return `React with ${emoji}`;
+}
+
 export function ChatWindow({ 
   selectedUser, 
   messages, 
@@ -2272,11 +2283,19 @@ export function ChatWindow({
                                       <button
                                         type="button"
                                         className="md:hidden rounded p-1 text-muted-foreground/30 hover:text-muted-foreground/50 focus-visible:text-muted-foreground/60 focus-visible:outline-none"
-                                        aria-label="Reactions"
+                                        aria-label={
+                                          messagingProvider === "green_api"
+                                            ? "Emoji replies (quoted)"
+                                            : "Reactions"
+                                        }
                                         aria-expanded={
                                           reactionEmojiMenuMessageId === message.id
                                         }
-                                        title="Reactions"
+                                        title={
+                                          messagingProvider === "green_api"
+                                            ? "Emoji sends as a quoted reply (not a sticker reaction — Green API)"
+                                            : "Reactions"
+                                        }
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setReactionEmojiMenuMessageId((prev) =>
@@ -2305,7 +2324,10 @@ export function ChatWindow({
                                               })();
                                             }}
                                             className="rounded px-1 py-0.5 text-base leading-none hover:bg-muted disabled:opacity-50"
-                                            title={`React ${em}`}
+                                            title={quickReactionButtonTitle(
+                                              messagingProvider,
+                                              em,
+                                            )}
                                           >
                                             {em}
                                           </button>
@@ -2335,7 +2357,10 @@ export function ChatWindow({
                                               })();
                                             }}
                                             className="rounded px-1 py-0.5 text-base leading-none hover:bg-muted disabled:opacity-50"
-                                            title={`React ${em}`}
+                                            title={quickReactionButtonTitle(
+                                              messagingProvider,
+                                              em,
+                                            )}
                                           >
                                             {em}
                                           </button>
@@ -2435,7 +2460,7 @@ export function ChatWindow({
             className="flex-1 min-h-[42px] max-h-[160px] resize-none overflow-y-auto rounded-2xl border-border px-4 py-2.5 focus-visible:ring-emerald-500"
             maxLength={1000}
             disabled={isLoading || sendingMedia}
-            autoFocus
+            autoFocus={!isMobile}
           />
           <Button 
             type="submit" 
