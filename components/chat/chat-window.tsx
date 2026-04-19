@@ -27,6 +27,9 @@ import {
   ContactDataPopover,
   ContactDataTriggerButton,
 } from "./contact-data-popover";
+import { ImagePromptPickerDialog } from "./image-prompt-picker-dialog";
+import { ImageAnalysisDialog } from "./image-analysis-dialog";
+import type { ImagePrompt } from "@/lib/image-prompts";
 
 // Template interfaces
 interface TemplateComponent {
@@ -383,6 +386,17 @@ export function ChatWindow({
     filename: string;
     messageId: string;
   } | null>(null);
+  const [imagePromptPickerOpen, setImagePromptPickerOpen] = useState(false);
+  const [imagePromptPickerContext, setImagePromptPickerContext] = useState<{
+    messageId: string;
+    mediaUrl: string;
+    mimeType: string;
+  } | null>(null);
+  const [imageAnalysisOpen, setImageAnalysisOpen] = useState(false);
+  const [imageAnalysisTitle, setImageAnalysisTitle] = useState("Image analysis");
+  const [imageAnalysisLoading, setImageAnalysisLoading] = useState(false);
+  const [imageAnalysisError, setImageAnalysisError] = useState<string | null>(null);
+  const [imageAnalysisData, setImageAnalysisData] = useState<unknown>(null);
   const [composerEmojiUsage, setComposerEmojiUsage] = useState<Record<string, number>>({});
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   /** Wraps the message list; height grows when images load — observe for scroll correction. */
@@ -415,7 +429,7 @@ export function ChatWindow({
       setResolvedRuleText(selectedUser.status_rule?.trim() ?? "");
       return;
     }
-    const sid = selectedUser.status_id;
+    const sid = selectedUser?.status_id;
     if (!sid) {
       setResolvedStatusRuleMode(null);
       setResolvedRuleText("");
@@ -449,6 +463,7 @@ export function ChatWindow({
     };
   }, [
     broadcastGroupName,
+    selectedUser,
     selectedUser?.id,
     selectedUser?.status_id,
     selectedUser?.status_rule_mode,
@@ -1597,6 +1612,30 @@ export function ChatWindow({
                     </div>
                   </div>
                 )}
+                <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="icon"
+                    className="h-8 w-8 rounded-full bg-background/80 hover:bg-background"
+                    title="Analyze image"
+                    aria-label="Analyze image"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const mt =
+                        (typeof mediaData?.mime_type === "string" && mediaData.mime_type) ||
+                        "image/jpeg";
+                      setImagePromptPickerContext({
+                        messageId: message.id,
+                        mediaUrl: effectiveMediaUrl,
+                        mimeType: mt,
+                      });
+                      setImagePromptPickerOpen(true);
+                    }}
+                  >
+                    <Sparkles className="h-4 w-4" />
+                  </Button>
+                </div>
                 <Image
                   src={effectiveMediaUrl}
                   alt={mediaData.caption || "Shared image"}
@@ -2056,6 +2095,43 @@ export function ChatWindow({
             </div>
           </div>
         );
+    }
+  };
+
+  const runImagePrompt = async (picked: ImagePrompt) => {
+    const ctx = imagePromptPickerContext;
+    if (!ctx) return;
+    setImagePromptPickerOpen(false);
+    setImageAnalysisTitle(picked.name || "Image analysis");
+    setImageAnalysisOpen(true);
+    setImageAnalysisLoading(true);
+    setImageAnalysisError(null);
+    setImageAnalysisData(null);
+    try {
+      const res = await fetch("/api/ai/analyze-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          media_url: ctx.mediaUrl,
+          mime_type: ctx.mimeType,
+          prompt: picked.prompt,
+          expected_json: picked.expected_json,
+        }),
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        data?: unknown;
+        error?: string;
+        raw?: string;
+      };
+      if (!res.ok) {
+        throw new Error(j?.error || "Analyze failed");
+      }
+      setImageAnalysisData(j.data ?? null);
+    } catch (e) {
+      setImageAnalysisError(e instanceof Error ? e.message : "Analyze failed");
+    } finally {
+      setImageAnalysisLoading(false);
+      setImagePromptPickerContext(null);
     }
   };
 
@@ -2833,6 +2909,31 @@ export function ChatWindow({
             : undefined
         }
         sending={sendingMedia}
+      />
+
+      <ImagePromptPickerDialog
+        open={imagePromptPickerOpen}
+        busy={imageAnalysisLoading}
+        onClose={() => {
+          if (imageAnalysisLoading) return;
+          setImagePromptPickerOpen(false);
+          setImagePromptPickerContext(null);
+        }}
+        onPick={(p) => void runImagePrompt(p)}
+      />
+
+      <ImageAnalysisDialog
+        open={imageAnalysisOpen}
+        title={imageAnalysisTitle}
+        loading={imageAnalysisLoading}
+        error={imageAnalysisError}
+        data={imageAnalysisData}
+        onClose={() => {
+          if (imageAnalysisLoading) return;
+          setImageAnalysisOpen(false);
+          setImageAnalysisData(null);
+          setImageAnalysisError(null);
+        }}
       />
 
       {/* Meta message templates (WhatsApp Cloud only in practice) */}

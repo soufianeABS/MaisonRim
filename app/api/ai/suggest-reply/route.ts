@@ -8,7 +8,7 @@ import {
   type SuggestReplyTranscriptLine,
 } from "@/lib/prompts";
 
-const DEFAULT_MODEL = "gemini-2.0-flash";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
 type IncomingMessage = {
   content?: string;

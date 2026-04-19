@@ -838,6 +838,12 @@ export function UserList({
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
+                  <Link href="/protected/image-prompts" className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4" />
+                    Image Prompts
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
                   <Link href="/protected/statuses" className="flex items-center gap-2">
                     <Tag className="h-4 w-4" />
                     Statuses
