@@ -6,7 +6,7 @@ import { Image as ImageIcon, Loader2, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ImagePrompt, loadImagePromptsFromStorage } from "@/lib/image-prompts";
+import type { ImagePrompt } from "@/lib/image-prompts";
 import { cn } from "@/lib/utils";
 
 export function ImagePromptPickerDialog({
@@ -23,16 +23,36 @@ export function ImagePromptPickerDialog({
   const [q, setQ] = useState("");
   const [items, setItems] = useState<ImagePrompt[]>([]);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setQ("");
+    setFetchError(null);
     setLoading(true);
-    try {
-      setItems(loadImagePromptsFromStorage());
-    } finally {
-      setLoading(false);
-    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/image-prompts");
+        const data = (await res.json()) as { error?: string; prompts?: ImagePrompt[] };
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to load prompts");
+        }
+        if (!cancelled) {
+          setItems(data.prompts ?? []);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setFetchError(e instanceof Error ? e.message : "Failed to load prompts");
+          setItems([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   const filtered = useMemo(() => {
@@ -88,15 +108,21 @@ export function ImagePromptPickerDialog({
             placeholder="Search prompts…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            disabled={busy}
+            disabled={busy || loading}
           />
+
+          {fetchError ? (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+              {fetchError}
+            </div>
+          ) : null}
 
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
               Loading…
             </div>
-          ) : filtered.length === 0 ? (
+          ) : filtered.length === 0 && !fetchError ? (
             <div className="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm">
               <p className="text-muted-foreground">
                 No prompts found. Create one first.
@@ -110,7 +136,7 @@ export function ImagePromptPickerDialog({
                 </Button>
               </div>
             </div>
-          ) : (
+          ) : !fetchError ? (
             <ul className="max-h-[55vh] overflow-y-auto space-y-2">
               {filtered.map((p) => (
                 <li key={p.id}>
@@ -131,10 +157,9 @@ export function ImagePromptPickerDialog({
                 </li>
               ))}
             </ul>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
   );
 }
-

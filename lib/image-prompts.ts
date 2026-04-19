@@ -11,6 +11,7 @@ export type ImagePrompt = {
   updated_at: string;
 };
 
+/** Legacy browser-only storage (pre–per-user DB). Used to offer one-time import. */
 export const IMAGE_PROMPTS_STORAGE_KEY = "chat:imagePrompts:v1";
 
 function safeJsonParse<T>(raw: string): T | null {
@@ -21,6 +22,7 @@ function safeJsonParse<T>(raw: string): T | null {
   }
 }
 
+/** Read prompts saved in localStorage before server-backed storage existed. */
 export function loadImagePromptsFromStorage(): ImagePrompt[] {
   if (typeof window === "undefined") return [];
   const raw = window.localStorage.getItem(IMAGE_PROMPTS_STORAGE_KEY);
@@ -35,8 +37,10 @@ export function loadImagePromptsFromStorage(): ImagePrompt[] {
     if (typeof r.name !== "string") continue;
     if (typeof r.prompt !== "string") continue;
     if (typeof r.expected_json !== "string") continue;
-    const created_at = typeof r.created_at === "string" ? r.created_at : new Date().toISOString();
-    const updated_at = typeof r.updated_at === "string" ? r.updated_at : created_at;
+    const created_at =
+      typeof r.created_at === "string" ? r.created_at : new Date().toISOString();
+    const updated_at =
+      typeof r.updated_at === "string" ? r.updated_at : created_at;
     out.push({
       id: r.id,
       name: r.name,
@@ -49,13 +53,11 @@ export function loadImagePromptsFromStorage(): ImagePrompt[] {
   return out.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 }
 
-export function saveImagePromptsToStorage(next: ImagePrompt[]) {
+export function clearImagePromptsFromStorage() {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(IMAGE_PROMPTS_STORAGE_KEY, JSON.stringify(next));
+  try {
+    window.localStorage.removeItem(IMAGE_PROMPTS_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
 }
-
-export function newImagePromptId(): string {
-  // Good enough: avoids adding a uuid dependency.
-  return `ip_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
