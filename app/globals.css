@@ -64,6 +64,25 @@
   }
 }
 
+@layer components {
+  /**
+   * Native <select> / <option> follow OS styling; without explicit background, color,
+   * and color-scheme, Windows Chrome often shows a light dropdown with inherited
+   * light text (unreadable). Tie options to theme tokens.
+   */
+  .themed-native-select {
+    @apply bg-background text-foreground;
+    color-scheme: light;
+  }
+  html.dark .themed-native-select {
+    color-scheme: dark;
+  }
+  .themed-native-select option {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+}
+
 @layer utilities {
   /* Smooth fade-in animation */
   @keyframes fade-in {

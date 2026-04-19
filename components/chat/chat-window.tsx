@@ -375,7 +375,7 @@ export function ChatWindow({
   const [devTextOutbound, setDevTextOutbound] = useState("");
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [reactionBusyId, setReactionBusyId] = useState<string | null>(null);
-  /** Mobile: which message shows the quick-reaction emoji row (desktop uses hover). */
+  /** Which message shows the quick-reaction emoji row (Smile button toggles; no hover-only emojis). */
   const [reactionEmojiMenuMessageId, setReactionEmojiMenuMessageId] = useState<string | null>(null);
   const [composerEmojiPickerOpen, setComposerEmojiPickerOpen] = useState(false);
   const [imageViewer, setImageViewer] = useState<{
@@ -2519,7 +2519,7 @@ export function ChatWindow({
                         )}
                         
                         <div
-                          className={`group flex items-start gap-1 ${isOwn ? "justify-end" : "justify-start"}`}
+                          className={`flex items-start gap-1 ${isOwn ? "justify-end" : "justify-start"}`}
                         >
                           {isLocalhostDev &&
                             !message.id.startsWith("optimistic_") && (
@@ -2548,7 +2548,7 @@ export function ChatWindow({
                                   className={`flex flex-col gap-1 ${isOwn ? "items-end" : "items-start"}`}
                                 >
                                   <div
-                                    className={`flex flex-wrap items-center gap-0.5 px-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 ${isOwn ? "justify-end" : "justify-start"}`}
+                                    className={`flex flex-wrap items-center gap-0.5 px-0.5 ${isOwn ? "justify-end" : "justify-start"}`}
                                   >
                                     <button
                                       type="button"
@@ -2564,7 +2564,7 @@ export function ChatWindow({
                                     {onSendReaction && (
                                       <button
                                         type="button"
-                                        className="md:hidden rounded p-1 text-muted-foreground/30 hover:text-muted-foreground/50 focus-visible:text-muted-foreground/60 focus-visible:outline-none"
+                                        className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50"
                                         aria-label={
                                           messagingProvider === "green_api"
                                             ? "Emoji replies (quoted)"
@@ -2588,39 +2588,11 @@ export function ChatWindow({
                                         <Smile className="h-4 w-4 stroke-[1.25]" />
                                       </button>
                                     )}
-                                    {onSendReaction && (
-                                      <span className="hidden md:contents">
-                                        {QUICK_REACTION_EMOJIS.map((em) => (
-                                          <button
-                                            key={`${message.id}-desk-${em}`}
-                                            type="button"
-                                            disabled={reactionBusyId === message.id}
-                                            onClick={() => {
-                                              void (async () => {
-                                                setReactionBusyId(message.id);
-                                                try {
-                                                  await onSendReaction(message.id, em);
-                                                } finally {
-                                                  setReactionBusyId(null);
-                                                }
-                                              })();
-                                            }}
-                                            className="rounded px-1 py-0.5 text-base leading-none hover:bg-muted disabled:opacity-50"
-                                            title={quickReactionButtonTitle(
-                                              messagingProvider,
-                                              em,
-                                            )}
-                                          >
-                                            {em}
-                                          </button>
-                                        ))}
-                                      </span>
-                                    )}
                                   </div>
                                   {onSendReaction &&
                                     reactionEmojiMenuMessageId === message.id && (
                                       <div
-                                        className={`flex md:hidden flex-wrap items-center gap-0.5 px-0.5 ${isOwn ? "justify-end" : "justify-start"}`}
+                                        className={`flex flex-wrap items-center gap-0.5 px-0.5 ${isOwn ? "justify-end" : "justify-start"}`}
                                       >
                                         {QUICK_REACTION_EMOJIS.map((em) => (
                                           <button
@@ -2731,7 +2703,6 @@ export function ChatWindow({
                   open={contactDataOpen}
                   onOpenChange={setContactDataOpen}
                   contactPhone={selectedUser.id}
-                  contactDisplayName={contactDisplayName}
                   onAppendComposer={(chunk) => {
                     setMessageInput((prev) => (prev + chunk).slice(0, 1000));
                     requestAnimationFrame(() => {

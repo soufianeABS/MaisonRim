@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +23,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { readResponseJson } from "@/lib/read-response-json";
+import { cn } from "@/lib/utils";
 
 export type FieldTemplate = {
   id: string;
@@ -37,16 +44,97 @@ type ContactDataPopoverProps = {
   onOpenChange: (open: boolean) => void;
   /** Digits-only phone matching contacts.phone */
   contactPhone: string;
-  contactDisplayName?: string;
   /** Appends text to the message composer (respects max length in parent). */
   onAppendComposer: (text: string) => void;
+};
+
+function sortedFieldTemplates(templates: FieldTemplate[]) {
+  return [...templates].sort(
+    (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name),
+  );
+}
+
+function fieldKeyMatchesTemplate(fieldKey: string, sorted: FieldTemplate[]) {
+  const k = fieldKey.trim();
+  if (!k) return false;
+  return sorted.some((t) => t.name === k);
+}
+
+function FieldNamePicker({
+  idPrefix,
+  templates,
+  fieldKey,
+  onFieldKeyChange,
+  disabled,
+  compact,
+}: {
+  idPrefix: string;
+  templates: FieldTemplate[];
+  fieldKey: string;
+  onFieldKeyChange: (v: string) => void;
+  disabled?: boolean;
+  compact?: boolean;
+}) {
+  const sorted = useMemo(() => sortedFieldTemplates(templates), [templates]);
+  const hasLibrary = sorted.length > 0;
+  const matchesLibrary = fieldKeyMatchesTemplate(fieldKey, sorted);
+  /** Dropdown only lists templates — show it when the key is a library name (incl. default). */
+  const showTemplateSelect = hasLibrary && matchesLibrary;
+  /** Free text when there are no templates, or the key isn’t in the library (e.g. prefs / edit). */
+  const showCustomInput = !hasLibrary || !matchesLibrary;
+
+  const selectId = `${idPrefix}-field-select`;
+  const customId = `${idPrefix}-field-custom`;
+
+  useLayoutEffect(() => {
+    if (!hasLibrary || sorted.length === 0) return;
+    if (fieldKey.trim() !== "") return;
+    onFieldKeyChange(sorted[0].name);
+  }, [hasLibrary, sorted, fieldKey, onFieldKeyChange]);
+
+  return (
+    <div className="space-y-1.5">
+
+      {showTemplateSelect && (
+        <select
+          id={selectId}
+          value={fieldKey.trim()}
+          disabled={disabled}
+          onChange={(e) => onFieldKeyChange(e.target.value)}
+          className={cn(
+            "themed-native-select flex h-9 w-full rounded-md border border-input px-3 py-1 text-sm shadow-sm transition-colors",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+          )}
+        >
+          {sorted.map((t) => (
+            <option key={t.id} value={t.name}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+      )}
+      {showCustomInput && (
+        <Input
+          id={customId}
+          value={fieldKey}
+          onChange={(e) => onFieldKeyChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.preventDefault();
+          }}
+          placeholder="Field name"
+          className={cn("text-sm", compact ? "h-8" : "h-9")}
+          maxLength={200}
+          disabled={disabled}
+        />
+      )}
+    </div>
+  );
 }
 
 export function ContactDataPopover({
   open,
   onOpenChange,
   contactPhone,
-  contactDisplayName,
   onAppendComposer,
 }: ContactDataPopoverProps) {
   const [templates, setTemplates] = useState<FieldTemplate[]>([]);
@@ -224,17 +312,12 @@ export function ContactDataPopover({
 
   return (
     <div
-      className="absolute bottom-full left-0 z-50 mb-2 w-[min(calc(100vw-2rem),22rem)] rounded-xl border border-border bg-popover p-3 shadow-lg"
+      className="absolute bottom-full left-0 z-50 mb-2 w-[min(calc(100vw-2rem),20rem)] rounded-lg border border-border bg-popover p-3 shadow-md"
       role="dialog"
       aria-label="Contact data"
     >
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold leading-tight">Contact data</p>
-          <p className="truncate text-xs text-muted-foreground" title={contactDisplayName}>
-            {contactDisplayName || contactPhone}
-          </p>
-        </div>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-sm font-medium text-foreground">Contact data</p>
         <Link
           href="/protected/contact-data"
           className="inline-flex shrink-0 items-center gap-0.5 text-xs text-emerald-600 hover:underline"
@@ -257,44 +340,31 @@ export function ContactDataPopover({
         </div>
       ) : (
         <>
-          <ul className="mb-3 max-h-44 space-y-2 overflow-y-auto text-sm">
-            {entries.length === 0 ? (
-              <li className="text-xs text-muted-foreground">No saved fields yet.</li>
-            ) : (
-              entries.map((row) =>
+          {entries.length > 0 && (
+            <ul className="mb-3 max-h-40 space-y-0 overflow-y-auto rounded-md border border-border/80">
+              {entries.map((row) =>
                 editingEntryId === row.id ? (
                   <li
                     key={row.id}
-                    className="rounded-md border border-emerald-500/40 bg-muted/40 px-2 py-2"
+                    className="border-b border-border/60 bg-muted/30 p-2.5 last:border-b-0"
                   >
-                    <div className="space-y-1.5">
-                      <div>
-                        <Label className="text-[10px] text-muted-foreground">Field name</Label>
-                        <Input
-                          value={editFieldKey}
-                          onChange={(e) => setEditFieldKey(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") e.preventDefault();
-                          }}
-                          className="h-8 text-sm"
-                          maxLength={200}
-                          disabled={savingEdit}
-                          list="cdf-suggestions-edit"
-                        />
-                        <datalist id="cdf-suggestions-edit">
-                          {templates.map((t) => (
-                            <option key={t.id} value={t.name} />
-                          ))}
-                        </datalist>
-                      </div>
-                      <div>
+                    <div className="space-y-2">
+                      <FieldNamePicker
+                        idPrefix={`cdf-edit-${row.id}`}
+                        templates={templates}
+                        fieldKey={editFieldKey}
+                        onFieldKeyChange={setEditFieldKey}
+                        disabled={savingEdit}
+                        compact
+                      />
+                      <div className="space-y-1">
                         <Label className="text-[10px] text-muted-foreground">Value</Label>
                         <Textarea
                           value={editFieldValue}
                           onChange={(e) => setEditFieldValue(e.target.value)}
                           onKeyDown={(e) => e.stopPropagation()}
                           rows={2}
-                          className="min-h-[48px] resize-y text-sm"
+                          className="min-h-[44px] resize-y text-sm"
                           maxLength={8000}
                           disabled={savingEdit}
                         />
@@ -329,35 +399,31 @@ export function ContactDataPopover({
                 ) : (
                   <li
                     key={row.id}
-                    className="rounded-lg border border-border/60 bg-card/80 px-2.5 py-2 shadow-sm transition-colors hover:border-border hover:bg-muted/20"
+                    className="border-b border-border/60 px-2.5 py-2 last:border-b-0"
                   >
                     <div className="min-w-0">
                       <p
-                        className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                        className="truncate text-xs font-medium text-foreground"
                         title={row.field_key}
                       >
                         {row.field_key}
                       </p>
-                      <p className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-snug text-foreground">
-                        {row.field_value ? (
-                          row.field_value
-                        ) : (
-                          <span className="text-muted-foreground/80 italic">No value</span>
-                        )}
+                      <p className="mt-0.5 max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-snug text-muted-foreground">
+                        {row.field_value || "—"}
                       </p>
                     </div>
-                    <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-border/50 pt-2">
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <Button
                         type="button"
                         variant="secondary"
                         size="sm"
-                        className="h-8 min-h-8 shrink-0 px-3 text-xs font-medium"
+                        className="h-7 shrink-0 px-2 text-xs"
                         onClick={() => insertLine(row.field_key, row.field_value)}
                       >
                         Insert
                       </Button>
                       <div
-                        className="ml-auto flex shrink-0 items-center gap-0.5 rounded-md border border-border/50 bg-muted/40 p-0.5"
+                        className="ml-auto flex shrink-0 items-center gap-0.5"
                         role="group"
                         aria-label={`Actions for ${row.field_key}`}
                       >
@@ -365,7 +431,7 @@ export function ContactDataPopover({
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground"
                           title="Copy value"
                           aria-label={`Copy value for ${row.field_key}`}
                           onClick={() => void copyValue(row.id, row.field_value)}
@@ -380,7 +446,7 @@ export function ContactDataPopover({
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground"
                           title="Edit"
                           aria-label={`Edit ${row.field_key}`}
                           onClick={() => startEditEntry(row)}
@@ -391,7 +457,7 @@ export function ContactDataPopover({
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
                           title="Delete"
                           aria-label={`Delete ${row.field_key}`}
                           onClick={() => void removeEntry(row.id)}
@@ -402,35 +468,21 @@ export function ContactDataPopover({
                     </div>
                   </li>
                 ),
-              )
-            )}
-          </ul>
+              )}
+            </ul>
+          )}
 
-          <div className="space-y-2 border-t border-border pt-2">
+          <div
+            className={cn("space-y-2", entries.length > 0 && "border-t border-border pt-3")}
+          >
+            <FieldNamePicker
+              idPrefix="cdf-new"
+              templates={templates}
+              fieldKey={fieldKey}
+              onFieldKeyChange={setFieldKey}
+            />
             <div className="space-y-1">
-              <Label htmlFor="cdf-key" className="text-xs">
-                Field name
-              </Label>
-              <Input
-                id="cdf-key"
-                list="cdf-suggestions"
-                value={fieldKey}
-                onChange={(e) => setFieldKey(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") e.preventDefault();
-                }}
-                placeholder="e.g. Order ID"
-                className="h-9 text-sm"
-                maxLength={200}
-              />
-              <datalist id="cdf-suggestions">
-                {templates.map((t) => (
-                  <option key={t.id} value={t.name} />
-                ))}
-              </datalist>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="cdf-val" className="text-xs">
+              <Label htmlFor="cdf-val" className="text-xs text-muted-foreground">
                 Value
               </Label>
               <Textarea
@@ -438,9 +490,9 @@ export function ContactDataPopover({
                 value={fieldValue}
                 onChange={(e) => setFieldValue(e.target.value)}
                 onKeyDown={(e) => e.stopPropagation()}
-                placeholder="Any text…"
+                placeholder="…"
                 rows={2}
-                className="min-h-[52px] resize-y text-sm"
+                className="min-h-[48px] resize-y text-sm"
                 maxLength={8000}
               />
             </div>
@@ -456,21 +508,10 @@ export function ContactDataPopover({
               ) : (
                 <>
                   <Plus className="mr-1.5 h-4 w-4" />
-                  Save for contact
+                  Save
                 </>
               )}
             </Button>
-            <p className="text-[10px] leading-snug text-muted-foreground">
-              Suggested names come from your{" "}
-              <Link
-                href="/protected/contact-data"
-                className="text-emerald-600 underline"
-                onClick={() => onOpenChange(false)}
-              >
-                field name library
-              </Link>
-              . You can type any custom name here.
-            </p>
           </div>
         </>
       )}
@@ -497,7 +538,7 @@ export function ContactDataTriggerButton({
       className={`p-2 rounded-full transition-colors ${
         active ? "bg-muted text-foreground" : "hover:bg-muted"
       }`}
-      title="Contact data (name & value)"
+      title="Contact data"
       aria-expanded={active}
       aria-haspopup="dialog"
     >

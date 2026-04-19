@@ -81,7 +81,7 @@ export function SavedMessagePicker({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="flex max-h-[min(560px,85vh)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-xl">
+      <div className="flex max-h-[min(560px,85vh)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-xl">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h2 className="text-lg font-semibold">Saved messages</h2>
           <Button
@@ -122,19 +122,21 @@ export function SavedMessagePicker({
               </Button>
             </div>
           ) : (
-            <ul className="space-y-1">
+            <ul className="grid grid-cols-3 gap-2">
               {filtered.map((r) => (
-                <li key={r.id}>
+                <li key={r.id} className="min-w-0">
                   <button
                     type="button"
                     onClick={() => {
                       onInsert(r.body);
                       onClose();
                     }}
-                    className="w-full rounded-xl border border-transparent px-3 py-2.5 text-left transition-colors hover:border-emerald-500/30 hover:bg-muted/80"
+                    className="flex h-full min-h-[4.5rem] w-full flex-col rounded-xl border border-transparent px-3 py-2.5 text-left transition-colors hover:border-emerald-500/30 hover:bg-muted/80"
                   >
-                    <div className="font-medium text-foreground">{r.title}</div>
-                    <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                    <div className="line-clamp-2 font-medium text-foreground">
+                      {r.title}
+                    </div>
+                    <div className="mt-0.5 line-clamp-2 flex-1 text-xs text-muted-foreground">
                       {r.body}
                     </div>
                   </button>
