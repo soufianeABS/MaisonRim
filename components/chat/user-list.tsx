@@ -23,7 +23,14 @@ import {
   Bookmark,
   Loader2,
 } from "lucide-react";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import {
@@ -93,6 +100,47 @@ function contactSearchKey(id: string): string {
   const d = id.replace(/\D/g, "");
   if (d.length >= 6) return d;
   return id.trim();
+}
+
+function TagFilterRow({
+  statuses,
+  selectedStatusId,
+  setSelectedStatusId,
+}: {
+  statuses: ContactStatusNormalized[];
+  selectedStatusId: string | null;
+  setSelectedStatusId: Dispatch<SetStateAction<string | null>>;
+}) {
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible">
+      <Button
+        type="button"
+        variant={selectedStatusId === null ? "default" : "outline"}
+        size="sm"
+        className="h-8 shrink-0 rounded-full px-3 text-xs"
+        onClick={() => setSelectedStatusId(null)}
+      >
+        All
+      </Button>
+      {statuses.map((s) => (
+        <Button
+          key={s.id}
+          type="button"
+          variant={selectedStatusId === s.id ? "default" : "outline"}
+          size="sm"
+          className="h-8 shrink-0 rounded-full px-3 text-xs gap-2"
+          onClick={() => setSelectedStatusId((prev) => (prev === s.id ? null : s.id))}
+          title={s.name}
+        >
+          <span
+            className="inline-block h-2.5 w-2.5 rounded-full"
+            style={{ backgroundColor: s.color }}
+          />
+          <span className="max-w-[160px] truncate">{s.name}</span>
+        </Button>
+      ))}
+    </div>
+  );
 }
 
 export function UserList({
@@ -937,84 +985,71 @@ export function UserList({
         </div>
       )}
 
-      {/* Tags (Statuses) — foldable: collapsed shows active tag only */}
+      {/* Tags (Statuses) — always visible on mobile; foldable on desktop */}
       <div className="border-b border-border px-3 pb-2 pt-3 sm:px-4">
-        <button
-          type="button"
-          onClick={() => setTagsExpanded((v) => !v)}
-          aria-expanded={tagsExpanded}
-          className="flex w-full min-w-0 items-center gap-2 rounded-xl px-1.5 py-1.5 text-left transition-colors hover:bg-muted/50"
-        >
-          <span className="text-xs font-semibold tracking-wide text-muted-foreground">
-            Tags
-          </span>
-          {!tagsExpanded && (
-            <div className="flex min-w-0 flex-1 items-center justify-end sm:justify-start">
-              {selectedStatusId ? (
-                (() => {
-                  const s = statuses.find((x) => x.id === selectedStatusId);
-                  return (
-                    <span className="inline-flex max-w-[min(100%,11rem)] items-center gap-2 rounded-full border border-border/80 bg-gradient-to-r from-muted/50 to-muted/30 px-2.5 py-1 text-xs font-medium text-foreground shadow-sm">
-                      {s?.color ? (
-                        <span
-                          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-background"
-                          style={{ backgroundColor: s.color }}
-                        />
-                      ) : (
-                        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-border" />
-                      )}
-                      <span className="truncate">{s?.name ?? "Tag"}</span>
-                    </span>
-                  );
-                })()
-              ) : (
-                <span className="inline-flex items-center rounded-full bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
-                  All
-                </span>
-              )}
-            </div>
-          )}
-          <ChevronDown
-            className={cn(
-              "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
-              tagsExpanded && "rotate-180"
-            )}
-            aria-hidden
+        {isMobile ? (
+          <TagFilterRow
+            statuses={statuses}
+            selectedStatusId={selectedStatusId}
+            setSelectedStatusId={setSelectedStatusId}
           />
-        </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => setTagsExpanded((v) => !v)}
+              aria-expanded={tagsExpanded}
+              className="flex w-full min-w-0 items-center gap-2 rounded-xl px-1.5 py-1.5 text-left transition-colors hover:bg-muted/50"
+            >
+              <span className="text-xs font-semibold tracking-wide text-muted-foreground">
+                Tags
+              </span>
+              {!tagsExpanded && (
+                <div className="flex min-w-0 flex-1 items-center justify-end sm:justify-start">
+                  {selectedStatusId ? (
+                    (() => {
+                      const s = statuses.find((x) => x.id === selectedStatusId);
+                      return (
+                        <span className="inline-flex max-w-[min(100%,11rem)] items-center gap-2 rounded-full border border-border/80 bg-gradient-to-r from-muted/50 to-muted/30 px-2.5 py-1 text-xs font-medium text-foreground shadow-sm">
+                          {s?.color ? (
+                            <span
+                              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-background"
+                              style={{ backgroundColor: s.color }}
+                            />
+                          ) : (
+                            <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-border" />
+                          )}
+                          <span className="truncate">{s?.name ?? "Tag"}</span>
+                        </span>
+                      );
+                    })()
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
+                      All
+                    </span>
+                  )}
+                </div>
+              )}
+              <ChevronDown
+                className={cn(
+                  "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                  tagsExpanded && "rotate-180"
+                )}
+                aria-hidden
+              />
+            </button>
 
-        {tagsExpanded ? (
-          <div className="mt-2">
-            <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible">
-              <Button
-                type="button"
-                variant={selectedStatusId === null ? "default" : "outline"}
-                size="sm"
-                className="h-8 shrink-0 rounded-full px-3 text-xs"
-                onClick={() => setSelectedStatusId(null)}
-              >
-                All
-              </Button>
-              {statuses.map((s) => (
-                <Button
-                  key={s.id}
-                  type="button"
-                  variant={selectedStatusId === s.id ? "default" : "outline"}
-                  size="sm"
-                  className="h-8 shrink-0 rounded-full px-3 text-xs gap-2"
-                  onClick={() => setSelectedStatusId((prev) => (prev === s.id ? null : s.id))}
-                  title={s.name}
-                >
-                  <span
-                    className="inline-block h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: s.color }}
-                  />
-                  <span className="max-w-[160px] truncate">{s.name}</span>
-                </Button>
-              ))}
-            </div>
-          </div>
-        ) : null}
+            {tagsExpanded ? (
+              <div className="mt-2">
+                <TagFilterRow
+                  statuses={statuses}
+                  selectedStatusId={selectedStatusId}
+                  setSelectedStatusId={setSelectedStatusId}
+                />
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
 
       {/* Search + last-sender filter */}

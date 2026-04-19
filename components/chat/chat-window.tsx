@@ -387,8 +387,6 @@ export function ChatWindow({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   /** Wraps the message list; height grows when images load — observe for scroll correction. */
   const messagesInnerRef = useRef<HTMLDivElement>(null);
-  /** Bottom-of-list marker: when pinned, if this leaves the scrollport (e.g. images grew), snap back down. */
-  const messagesBottomSentinelRef = useRef<HTMLDivElement>(null);
   /** If true, keep pinned to bottom when content height changes (images, late layout). */
   const stickToBottomRef = useRef(true);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
@@ -764,7 +762,8 @@ export function ChatWindow({
   const onMessagesScroll = useCallback(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
-    const threshold = 120;
+    /** Pixels from bottom still considered “at bottom” for pin / auto-scroll. */
+    const threshold = 48;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     stickToBottomRef.current = distFromBottom <= threshold;
   }, []);
@@ -820,26 +819,6 @@ export function ChatWindow({
     messages.length,
     isMessagesLoading,
   ]);
-
-  // When content grows below the fold (images, video poster), sentinel can leave the scrollport — snap if still pinned.
-  useEffect(() => {
-    const root = messagesContainerRef.current;
-    const sentinel = messagesBottomSentinelRef.current;
-    if (!root || !sentinel || messages.length === 0) return;
-
-    const io = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (!entry || !stickToBottomRef.current) return;
-        if (!entry.isIntersecting) {
-          root.scrollTop = root.scrollHeight;
-        }
-      },
-      { root, rootMargin: "0px", threshold: 0 },
-    );
-    io.observe(sentinel);
-    return () => io.disconnect();
-  }, [selectedUser?.id, broadcastGroupName, messages.length, isMessagesLoading]);
 
   // Handle ESC key press within the chat window
   useEffect(() => {
@@ -2680,11 +2659,6 @@ export function ChatWindow({
                 </div>
               </div>
             ))}
-            <div
-              ref={messagesBottomSentinelRef}
-              className="h-px w-full shrink-0 pointer-events-none"
-              aria-hidden
-            />
           </div>
         )}
       </div>
