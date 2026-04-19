@@ -66,19 +66,31 @@ export function ContactDataPopover({
     setLoading(true);
     setError(null);
     try {
-      const [tRes, eRes] = await Promise.all([
+      const [tRes, eRes, pRes] = await Promise.all([
         fetch("/api/contact-data/templates", { credentials: "include" }),
         fetch(
           `/api/contact-data/entries?phone=${encodeURIComponent(contactPhone)}`,
           { credentials: "include" },
         ),
+        fetch("/api/contact-data/preferences", { credentials: "include" }),
       ]);
       const tJson = await readResponseJson<{ templates?: unknown; error?: string }>(tRes);
       const eJson = await readResponseJson<{ entries?: unknown; error?: string }>(eRes);
+      const pJson = await readResponseJson<{
+        default_field_name?: unknown;
+        error?: string;
+      }>(pRes);
       if (!tRes.ok) throw new Error(tJson.error || "Failed to load field names");
       if (!eRes.ok) throw new Error(eJson.error || "Failed to load contact data");
       setTemplates(Array.isArray(tJson.templates) ? (tJson.templates as FieldTemplate[]) : []);
       setEntries(Array.isArray(eJson.entries) ? (eJson.entries as ContactDataEntry[]) : []);
+
+      let defaultName = "";
+      if (pRes.ok) {
+        defaultName =
+          typeof pJson.default_field_name === "string" ? pJson.default_field_name : "";
+      }
+      setFieldKey((prev) => (prev.trim() === "" ? defaultName : prev));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
       setTemplates([]);

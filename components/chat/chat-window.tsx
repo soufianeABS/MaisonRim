@@ -196,9 +196,11 @@ function GreenOutgoingTicks({ status }: { status: string | null }) {
   const isRead = status === "read";
   const isDelivered = status === "delivered" || isRead;
   const isFailed = status === "failed";
+  /** Read = bright yellow ticks + dark rim + soft yellow glow on emerald-600 bubbles */
   const tickClass = isRead
-    ? "text-sky-300 [filter:drop-shadow(0_0_1.5px_rgba(125,211,252,0.95))_drop-shadow(0_0_8px_rgba(56,189,248,0.5))]"
+    ? "text-yellow-200 [filter:drop-shadow(0_0.5px_0_rgba(6,78,59,0.95))_drop-shadow(0_1.5px_2px_rgba(0,0,0,0.4))_drop-shadow(0_0_10px_rgba(250,204,21,0.75))]"
     : "text-emerald-100/90";
+  const readStroke = isRead ? 3 : 2.5;
 
   if (isFailed) {
     return (
@@ -221,8 +223,8 @@ function GreenOutgoingTicks({ status }: { status: string | null }) {
         title={label}
         aria-label={label}
       >
-        <Check className="h-3.5 w-3.5 -mr-2" strokeWidth={2.5} />
-        <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+        <Check className="h-3.5 w-3.5 -mr-2" strokeWidth={readStroke} />
+        <Check className="h-3.5 w-3.5" strokeWidth={readStroke} />
       </span>
     );
   }
@@ -233,7 +235,7 @@ function GreenOutgoingTicks({ status }: { status: string | null }) {
       title={label}
       aria-label={label}
     >
-      <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+      <Check className="h-3.5 w-3.5" strokeWidth={readStroke} />
     </span>
   );
 }
