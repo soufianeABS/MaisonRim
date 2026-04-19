@@ -88,6 +88,13 @@ interface NewUserInput {
 /** Persists the conversation tag filter across refresh and client-side navigation. */
 const TAG_FILTER_STORAGE_KEY = "chat:userListTagFilter";
 
+/** Aligns with /api/messages/search contactId keys (digits-only phone). */
+function contactSearchKey(id: string): string {
+  const d = id.replace(/\D/g, "");
+  if (d.length >= 6) return d;
+  return id.trim();
+}
+
 export function UserList({
   users,
   selectedUser,
@@ -124,7 +131,7 @@ export function UserList({
   /** Tags filter: folded shows only the active tag; expand to pick another. */
   const [tagsExpanded, setTagsExpanded] = useState(false);
 
-  /** DB message search (name + full-text across messages); updated debounced when searchTerm ≥ 2 chars. */
+  /** DB search: messages + contact notebook (field keys/values); debounced when searchTerm ≥ 2 chars. */
   const [messageSearchMeta, setMessageSearchMeta] = useState<
     Map<string, { preview: string; matchCount: number; lastAt: string }>
   >(() => new Map());
@@ -366,7 +373,7 @@ export function UserList({
         `${displayName} ${user.whatsapp_name || ""} ${user.id}`.toLowerCase();
       const matchesName = !q || searchableText.includes(q);
       const matchesMessage =
-        q.length >= 2 && messageSearchMeta.has(user.id);
+        q.length >= 2 && messageSearchMeta.has(contactSearchKey(user.id));
       const matchesSearch = !q || matchesName || matchesMessage;
 
       const effectiveStatusId =
@@ -382,13 +389,13 @@ export function UserList({
     }
 
     return [...base].sort((a, b) => {
-      const ma = messageSearchMeta.has(a.id);
-      const mb = messageSearchMeta.has(b.id);
+      const ma = messageSearchMeta.has(contactSearchKey(a.id));
+      const mb = messageSearchMeta.has(contactSearchKey(b.id));
       if (ma && !mb) return -1;
       if (!ma && mb) return 1;
       if (ma && mb) {
-        const ca = messageSearchMeta.get(a.id)!.matchCount;
-        const cb = messageSearchMeta.get(b.id)!.matchCount;
+        const ca = messageSearchMeta.get(contactSearchKey(a.id))!.matchCount;
+        const cb = messageSearchMeta.get(contactSearchKey(b.id))!.matchCount;
         if (cb !== ca) return cb - ca;
       }
       const aTime = new Date(a.last_message_time || a.last_active).getTime();
@@ -1016,7 +1023,7 @@ export function UserList({
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
           <input
             type="text"
-            placeholder="Search name, phone, or message text…"
+            placeholder="Search name, phone, messages, or contact data…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-10 py-2 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-green-500"
@@ -1278,27 +1285,28 @@ export function UserList({
                   
                   <p
                     className={`text-sm truncate mt-1 ${
-                      messageSearchMeta.has(user.id)
+                      messageSearchMeta.has(contactSearchKey(user.id))
                         ? "text-foreground"
                         : `text-muted-foreground ${
                             (user.unread_count || 0) > 0 ? "font-medium text-foreground" : ""
                           }`
                     }`}
                     title={
-                      messageSearchMeta.get(user.id)?.preview || getMessagePreview(user)
+                      messageSearchMeta.get(contactSearchKey(user.id))?.preview ||
+                      getMessagePreview(user)
                     }
                   >
-                    {messageSearchMeta.has(user.id) ? (
+                    {messageSearchMeta.has(contactSearchKey(user.id)) ? (
                       <>
                         <span className="text-emerald-600 dark:text-emerald-400 font-medium">
                           Match
-                          {messageSearchMeta.get(user.id)!.matchCount > 1
-                            ? ` (${messageSearchMeta.get(user.id)!.matchCount})`
+                          {messageSearchMeta.get(contactSearchKey(user.id))!.matchCount > 1
+                            ? ` (${messageSearchMeta.get(contactSearchKey(user.id))!.matchCount})`
                             : ""}
                           :{" "}
                         </span>
                         <span className="text-muted-foreground">
-                          {messageSearchMeta.get(user.id)!.preview || "—"}
+                          {messageSearchMeta.get(contactSearchKey(user.id))!.preview || "—"}
                         </span>
                       </>
                     ) : (

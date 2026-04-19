@@ -8,6 +8,26 @@ function escapeLikePattern(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
+/** Align contact ids across messages and contact_data_entries (digits-only phone). */
+function normalizeContactKey(raw: string): string {
+  const d = String(raw).replace(/\D/g, '');
+  if (d.length >= 6) return d;
+  return String(raw).trim();
+}
+
+/** Case-insensitive substring: every term must appear in field_key or field_value. */
+function entryMatchesTerms(
+  row: { field_key: string; field_value: string },
+  terms: string[],
+): boolean {
+  const k = (row.field_key ?? '').toLowerCase();
+  const v = (row.field_value ?? '').toLowerCase();
+  return terms.every((term) => {
+    const t = term.toLowerCase();
+    return k.includes(t) || v.includes(t);
+  });
+}
+
 export type MessageSearchMatch = {
   contactId: string;
   preview: string;
@@ -16,9 +36,10 @@ export type MessageSearchMatch = {
 };
 
 /**
- * GET ?q=... — search message bodies across all conversations for the signed-in user.
- * RLS limits rows to messages where sender_id or receiver_id is the current user.
- * Multiple words are ANDed (each must appear somewhere in content).
+ * GET ?q=... — search message bodies and contact notebook data (field_key / field_value)
+ * across conversations for the signed-in user. RLS applies to both tables.
+ * Multiple words are ANDed (each term must match somewhere in the message body, or in
+ * field_key or field_value for the same entry).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -61,7 +82,18 @@ export async function GET(request: NextRequest) {
       query = query.ilike('content', `%${esc}%`);
     }
 
-    const { data: rows, error } = await query;
+    const entryQuery = supabase
+      .from('contact_data_entries')
+      .select('contact_phone, field_key, field_value, updated_at')
+      .eq('owner_id', user.id)
+      .order('updated_at', { ascending: false })
+      .limit(6000);
+
+    const [
+      { data: rows, error },
+      { data: allEntries, error: entryError },
+    ] = await Promise.all([query, entryQuery]);
+
     if (error) {
       console.error('messages/search:', error);
       return NextResponse.json(
@@ -69,6 +101,20 @@ export async function GET(request: NextRequest) {
         { status: 500 },
       );
     }
+
+    if (entryError) {
+      console.error('messages/search contact_data_entries:', entryError);
+    }
+
+    const entryRows = (allEntries || []).filter((row) =>
+      entryMatchesTerms(
+        {
+          field_key: String(row.field_key ?? ''),
+          field_value: String(row.field_value ?? ''),
+        },
+        terms,
+      ),
+    );
 
     const uid = user.id;
     const countByContact = new Map<string, number>();
@@ -84,19 +130,43 @@ export async function GET(request: NextRequest) {
             : null;
       if (!other || other === uid) continue;
 
-      countByContact.set(other, (countByContact.get(other) || 0) + 1);
-      if (!previewByContact.has(other)) {
+      const contactKey = normalizeContactKey(String(other));
+      if (!contactKey) continue;
+
+      countByContact.set(contactKey, (countByContact.get(contactKey) || 0) + 1);
+      if (!previewByContact.has(contactKey)) {
         const text = (m.content ?? '').replace(/\s+/g, ' ').trim();
-        previewByContact.set(other, text.slice(0, 200));
-        lastAtByContact.set(other, m.timestamp);
+        previewByContact.set(contactKey, text.slice(0, 200));
+        lastAtByContact.set(contactKey, m.timestamp);
+      }
+    }
+
+    for (const row of entryRows || []) {
+      const contactId = normalizeContactKey(String(row.contact_phone ?? ''));
+      if (!contactId) continue;
+
+      countByContact.set(contactId, (countByContact.get(contactId) || 0) + 1);
+
+      const valueSnippet = (row.field_value ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const previewLine = `${row.field_key}: ${valueSnippet}`.slice(0, 180);
+      if (!previewByContact.has(contactId)) {
+        previewByContact.set(contactId, `Contact data — ${previewLine}`);
+      }
+
+      const t = row.updated_at as string;
+      const prevLast = lastAtByContact.get(contactId);
+      if (!prevLast || new Date(t).getTime() > new Date(prevLast).getTime()) {
+        lastAtByContact.set(contactId, t);
       }
     }
 
     const matches: MessageSearchMatch[] = [];
-    for (const [contactId, preview] of previewByContact) {
+    for (const contactId of countByContact.keys()) {
       matches.push({
         contactId,
-        preview,
+        preview: previewByContact.get(contactId) || '',
         matchCount: countByContact.get(contactId) || 0,
         lastAt: lastAtByContact.get(contactId) || '',
       });

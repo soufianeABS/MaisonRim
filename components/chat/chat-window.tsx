@@ -23,6 +23,10 @@ import { ImageViewerDialog } from "./image-viewer-dialog";
 import { UserInfoDialog } from "./user-info-dialog";
 import { TemplateSelector } from "./template-selector";
 import { SavedMessagePicker } from "./saved-message-picker";
+import {
+  ContactDataPopover,
+  ContactDataTriggerButton,
+} from "./contact-data-popover";
 
 // Template interfaces
 interface TemplateComponent {
@@ -192,7 +196,9 @@ function GreenOutgoingTicks({ status }: { status: string | null }) {
   const isRead = status === "read";
   const isDelivered = status === "delivered" || isRead;
   const isFailed = status === "failed";
-  const tickClass = isRead ? "text-sky-300" : "text-emerald-100/90";
+  const tickClass = isRead
+    ? "text-sky-300 [filter:drop-shadow(0_0_1.5px_rgba(125,211,252,0.95))_drop-shadow(0_0_8px_rgba(56,189,248,0.5))]"
+    : "text-emerald-100/90";
 
   if (isFailed) {
     return (
@@ -351,6 +357,7 @@ export function ChatWindow({
   const [showUserInfo, setShowUserInfo] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [showSavedMessagePicker, setShowSavedMessagePicker] = useState(false);
+  const [contactDataOpen, setContactDataOpen] = useState(false);
   const [replyAgents, setReplyAgents] = useState<{ id: string; name: string }[]>([]);
   const [replyAgentsLoading, setReplyAgentsLoading] = useState(false);
   const [suggestingReply, setSuggestingReply] = useState(false);
@@ -384,6 +391,7 @@ export function ChatWindow({
   const stickToBottomRef = useRef(true);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const composerEmojiWrapRef = useRef<HTMLDivElement>(null);
+  const contactDataWrapRef = useRef<HTMLDivElement>(null);
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
 
   const sortedComposerEmojis = useMemo(
@@ -841,6 +849,8 @@ export function ChatWindow({
           setShowMediaUpload(false);
         } else if (showSavedMessagePicker) {
           setShowSavedMessagePicker(false);
+        } else if (contactDataOpen) {
+          setContactDataOpen(false);
         } else if (showTemplateSelector) {
           setShowTemplateSelector(false);
         } else if (isMobile && onBack) {
@@ -865,13 +875,27 @@ export function ChatWindow({
     showMediaUpload,
     showTemplateSelector,
     showSavedMessagePicker,
+    contactDataOpen,
     composerEmojiPickerOpen,
   ]);
 
   useEffect(() => {
     setReactionEmojiMenuMessageId(null);
     setComposerEmojiPickerOpen(false);
+    setContactDataOpen(false);
   }, [selectedUser?.id, broadcastGroupName]);
+
+  useEffect(() => {
+    if (!contactDataOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = contactDataWrapRef.current;
+      if (el && !el.contains(e.target as Node)) {
+        setContactDataOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [contactDataOpen]);
 
   // Handle drag and drop for the entire chat window
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -2701,24 +2725,48 @@ export function ChatWindow({
             </Button>
           )}
           {/* WhatsApp Cloud: Meta templates · Green API: saved messages → composer */}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              messagingProvider === "green_api"
-                ? setShowSavedMessagePicker(true)
-                : setShowTemplateSelector(true)
-            }
-            className="p-2 hover:bg-muted rounded-full transition-colors"
-            title={
-              messagingProvider === "green_api"
-                ? "Insert saved message"
-                : "Send template"
-            }
-          >
-            <MessageSquare className="h-5 w-5" />
-          </Button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                messagingProvider === "green_api"
+                  ? setShowSavedMessagePicker(true)
+                  : setShowTemplateSelector(true)
+              }
+              className="p-2 hover:bg-muted rounded-full transition-colors"
+              title={
+                messagingProvider === "green_api"
+                  ? "Insert saved message"
+                  : "Send template"
+              }
+            >
+              <MessageSquare className="h-5 w-5" />
+            </Button>
+            {selectedUser && !broadcastGroupName && (
+              <div className="relative" ref={contactDataWrapRef}>
+                <ContactDataTriggerButton
+                  active={contactDataOpen}
+                  onClick={() => setContactDataOpen((o) => !o)}
+                  disabled={isLoading || sendingMedia}
+                />
+                <ContactDataPopover
+                  open={contactDataOpen}
+                  onOpenChange={setContactDataOpen}
+                  contactPhone={selectedUser.id}
+                  contactDisplayName={contactDisplayName}
+                  onAppendComposer={(chunk) => {
+                    setMessageInput((prev) => (prev + chunk).slice(0, 1000));
+                    requestAnimationFrame(() => {
+                      messageInputRef.current?.focus();
+                      adjustMessageInputHeight();
+                    });
+                  }}
+                />
+              </div>
+            )}
+          </div>
           <div
             ref={composerEmojiWrapRef}
             className="relative min-w-0 flex-1"
