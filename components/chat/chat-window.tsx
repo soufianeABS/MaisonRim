@@ -1014,7 +1014,7 @@ export function ChatWindow({
           {label}
         </div>
         <div
-          className={`text-xs line-clamp-2 mt-0.5 break-words [overflow-wrap:anywhere] ${
+          className={`text-xs line-clamp-2 mt-0.5 break-words ${
             isOwn ? "text-emerald-50/95" : "text-muted-foreground"
           }`}
         >
@@ -1679,7 +1679,7 @@ export function ChatWindow({
               </div>
             )}
             {mediaData?.caption && (
-              <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] mb-2">
+              <p className="text-sm whitespace-pre-wrap break-words mb-2">
                 {mediaData.caption}
               </p>
             )}
@@ -1888,7 +1888,7 @@ export function ChatWindow({
               </div>
             )}
             {mediaData?.caption && (
-              <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] mb-2">
+              <p className="text-sm whitespace-pre-wrap break-words mb-2">
                 {mediaData.caption}
               </p>
             )}
@@ -1955,7 +1955,7 @@ export function ChatWindow({
               {/* Body Component */}
               {mediaData?.body && (
                 <div>
-                  <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] leading-relaxed">
+                  <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
                     {mediaData.body.text || message.content}
                   </p>
                 </div>
@@ -1963,7 +1963,7 @@ export function ChatWindow({
 
               {/* If no structured data, show the processed content */}
               {!mediaData?.body && !mediaData?.header && (
-                <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] leading-relaxed">
+                <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
                   {message.content}
                 </p>
               )}
@@ -2061,7 +2061,7 @@ export function ChatWindow({
         return (
           <div className={`${baseClasses} ${isOptimistic ? 'opacity-70' : ''} transition-opacity duration-300`}>
             {renderQuoteStripe(message, isOwn)}
-            <p className="text-sm whitespace-pre-wrap break-all [overflow-wrap:anywhere] leading-relaxed">
+            <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
               {message.content}
             </p>
             <div
