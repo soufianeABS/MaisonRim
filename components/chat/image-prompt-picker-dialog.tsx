@@ -122,10 +122,10 @@ export function ImagePromptPickerDialog({
               <Loader2 className="h-5 w-5 animate-spin" />
               Loading…
             </div>
-          ) : filtered.length === 0 && !fetchError ? (
+          ) : !fetchError && items.length === 0 ? (
             <div className="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm">
               <p className="text-muted-foreground">
-                No prompts found. Create one first.
+                No prompts yet. Create one first.
               </p>
               <div className="mt-3">
                 <Button asChild variant="outline" className="gap-2">
@@ -136,27 +136,52 @@ export function ImagePromptPickerDialog({
                 </Button>
               </div>
             </div>
+          ) : !fetchError && filtered.length === 0 ? (
+            <div className="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm space-y-3">
+              <p className="text-muted-foreground">No prompts match your search.</p>
+              <Button asChild variant="outline" className="gap-2 w-full sm:w-auto">
+                <Link href="/protected/image-prompts">
+                  <ImageIcon className="h-4 w-4" />
+                  Manage image prompts
+                </Link>
+              </Button>
+            </div>
           ) : !fetchError ? (
-            <ul className="max-h-[55vh] overflow-y-auto space-y-2">
-              {filtered.map((p) => (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onPick(p)}
-                    className={cn(
-                      "w-full text-left rounded-lg border border-border/70 bg-background p-3 transition-colors",
-                      "hover:bg-muted/40 disabled:opacity-60 disabled:cursor-not-allowed",
-                    )}
-                  >
-                    <p className="text-sm font-medium">{p.name}</p>
-                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2 whitespace-pre-wrap">
-                      {p.prompt}
-                    </p>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="max-h-[55vh] overflow-y-auto space-y-2">
+                {filtered.map((p) => (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onPick(p)}
+                      className={cn(
+                        "w-full text-left rounded-lg border border-border/70 bg-background p-3 transition-colors",
+                        "hover:bg-muted/40 disabled:opacity-60 disabled:cursor-not-allowed",
+                      )}
+                    >
+                      <p className="text-sm font-medium">{p.name}</p>
+                      <p className="mt-1 text-xs text-muted-foreground line-clamp-2 whitespace-pre-wrap">
+                        {p.prompt}
+                      </p>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="pt-1 border-t border-border/60">
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="sm"
+                  className="gap-2 h-auto py-2 px-2 text-muted-foreground hover:text-foreground w-full justify-start"
+                >
+                  <Link href="/protected/image-prompts">
+                    <ImageIcon className="h-4 w-4 shrink-0" />
+                    Manage image prompts
+                  </Link>
+                </Button>
+              </div>
+            </>
           ) : null}
         </div>
       </div>
