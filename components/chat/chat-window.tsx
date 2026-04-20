@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2, Reply, Smile, Check } from "lucide-react";
+import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2, Reply, Smile, Check, Languages } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchContactStatusesCached } from "@/lib/contact-statuses-cache";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
@@ -30,6 +30,7 @@ import {
 import { ImagePromptPickerDialog } from "./image-prompt-picker-dialog";
 import { ImageAnalysisDialog } from "./image-analysis-dialog";
 import type { ImagePrompt } from "@/lib/image-prompts";
+import { readResponseJson } from "@/lib/read-response-json";
 
 // Template interfaces
 interface TemplateComponent {
@@ -159,6 +160,37 @@ interface MediaData {
     url?: string;
     phone_number?: string;
   }>;
+}
+
+function parseMessageMediaJson(message: Message): MediaData | null {
+  if (!message.media_data) return null;
+  try {
+    if (typeof message.media_data === "string") {
+      return JSON.parse(message.media_data) as MediaData;
+    }
+    if (typeof message.media_data === "object") {
+      return message.media_data as unknown as MediaData;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/** Text that can be sent to Gemini for this bubble (captions, template body, plain text). */
+function getTranslatableText(message: Message, mediaData: MediaData | null): string | null {
+  if (message.id.startsWith("optimistic_")) return null;
+  const mt = message.message_type || "text";
+  if (mt === "image" || mt === "video") {
+    const cap = mediaData?.caption?.trim();
+    return cap && cap.length > 0 ? cap : null;
+  }
+  if (mt === "template") {
+    const t = (mediaData?.body?.text || message.content || "").trim();
+    return t.length > 0 ? t : null;
+  }
+  const t = (message.content || "").trim();
+  return t.length > 0 ? t : null;
 }
 
 interface MediaFile {
@@ -369,6 +401,11 @@ export function ChatWindow({
   const [isLocalhostDev, setIsLocalhostDev] = useState(false);
   const [devInsertLoading, setDevInsertLoading] = useState(false);
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
+  const [translationTargetLang, setTranslationTargetLang] = useState<string | null>(null);
+  const [translationByMessageId, setTranslationByMessageId] = useState<Record<string, string>>(
+    {},
+  );
+  const [translationLoadingId, setTranslationLoadingId] = useState<string | null>(null);
 
   const [devComposeOpen, setDevComposeOpen] = useState(false);
   const [devComposeKind, setDevComposeKind] = useState<"in" | "out" | "both" | null>(
@@ -477,6 +514,76 @@ export function ChatWindow({
       h === "localhost" || h === "127.0.0.1" || h === "::1",
     );
   }, []);
+
+  const loadTranslationPrefs = useCallback(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/translation/preferences", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const data = await readResponseJson<{
+          translation_target_language?: string | null;
+        }>(res);
+        if (!res.ok) return;
+        const lang = data.translation_target_language;
+        setTranslationTargetLang(typeof lang === "string" && lang.length > 0 ? lang : null);
+      } catch {
+        setTranslationTargetLang(null);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    loadTranslationPrefs();
+  }, [loadTranslationPrefs]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") loadTranslationPrefs();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [loadTranslationPrefs]);
+
+  useEffect(() => {
+    if (!translationTargetLang) {
+      setTranslationByMessageId({});
+      return;
+    }
+    const ids = messages
+      .filter((m) => !m.id.startsWith("optimistic_"))
+      .map((m) => m.id);
+    if (ids.length === 0) {
+      setTranslationByMessageId({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/translation/batch", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({
+            message_ids: ids,
+            target_language: translationTargetLang,
+          }),
+        });
+        const data = await readResponseJson<{ translations?: Record<string, string> }>(res);
+        if (!res.ok || cancelled) return;
+        if (data.translations && typeof data.translations === "object") {
+          setTranslationByMessageId(data.translations);
+        }
+      } catch {
+        if (!cancelled) setTranslationByMessageId({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, translationTargetLang]);
 
   // Load available ApiActions (Tag -> API mappings) once, so we can disable
   // the "Run action" button when no mapping exists for the tag.
@@ -1536,6 +1643,56 @@ export function ChatWindow({
     setLoadingMedia(prev => new Set(prev).add(messageId));
   };
 
+  const handleTranslateMessage = useCallback(
+    async (message: Message) => {
+      const md = parseMessageMediaJson(message);
+      const text = getTranslatableText(message, md);
+      if (!text || !translationTargetLang) return;
+      setTranslationLoadingId(message.id);
+      try {
+        const res = await fetch("/api/translation/translate", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message_id: message.id,
+            text,
+            target_language: translationTargetLang,
+          }),
+        });
+        const data = await readResponseJson<{
+          translated_text?: string;
+          error?: string;
+        }>(res);
+        if (!res.ok) throw new Error(data.error || "Translation failed");
+        const tr = data.translated_text?.trim();
+        if (tr) {
+          setTranslationByMessageId((prev) => ({ ...prev, [message.id]: tr }));
+        }
+      } catch (e) {
+        console.error(e);
+        alert(e instanceof Error ? e.message : "Translation failed");
+      } finally {
+        setTranslationLoadingId(null);
+      }
+    },
+    [translationTargetLang],
+  );
+
+  const renderTranslationLine = (message: Message, isOwn: boolean) => {
+    const line = translationByMessageId[message.id];
+    if (!line) return null;
+    return (
+      <p
+        className={`mt-2 border-t pt-2 text-sm whitespace-pre-wrap break-words leading-relaxed ${
+          isOwn ? "border-emerald-400/30 text-emerald-50/95" : "border-border text-muted-foreground"
+        }`}
+      >
+        {line}
+      </p>
+    );
+  };
+
   const messageTimestampRow = (message: Message, isOwn: boolean) => {
     const showTicks =
       messagingProvider === "green_api" &&
@@ -1701,6 +1858,7 @@ export function ChatWindow({
                 {mediaData.caption}
               </p>
             )}
+            {renderTranslationLine(message, isOwn)}
             <div
               className={`text-xs mt-0.5 flex w-full ${isOwn ? "justify-end" : "justify-start"}`}
             >
@@ -1910,6 +2068,7 @@ export function ChatWindow({
                 {mediaData.caption}
               </p>
             )}
+            {renderTranslationLine(message, isOwn)}
             <div
               className={`text-xs mt-1 flex w-full ${isOwn ? "justify-end" : "justify-start"}`}
             >
@@ -2063,6 +2222,8 @@ export function ChatWindow({
               )}
             </div>
 
+            {renderTranslationLine(message, isOwn)}
+
             {/* Timestamp */}
             <div
               className={`text-xs mt-3 flex w-full ${isOwn ? "justify-end" : "justify-start"}`}
@@ -2082,6 +2243,7 @@ export function ChatWindow({
             <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
               {message.content}
             </p>
+            {renderTranslationLine(message, isOwn)}
             <div
               className={`flex items-center gap-2 mt-2 flex-wrap ${isOwn ? "justify-end" : "justify-start"}`}
             >
@@ -2578,6 +2740,13 @@ export function ChatWindow({
 
                     const globalIndex = messages.findIndex(m => m.id === message.id);
                     const isFirstUnread = globalIndex === firstUnreadIndex;
+                    const mediaForTr = parseMessageMediaJson(message);
+                    const translateSource = getTranslatableText(message, mediaForTr);
+                    const canTranslateBubble =
+                      translateSource !== null && !message.id.startsWith("optimistic_");
+                    const translateBtnTitle = translationTargetLang
+                      ? `Translate (${translationTargetLang})`
+                      : "Set target language: Tools → Translation";
 
                     return (
                       <div key={message.id}>
@@ -2613,6 +2782,24 @@ export function ChatWindow({
                                 )}
                               </button>
                             )}
+                          {canTranslateBubble && isOwn && (
+                            <button
+                              type="button"
+                              onClick={() => void handleTranslateMessage(message)}
+                              disabled={
+                                !translationTargetLang || translationLoadingId === message.id
+                              }
+                              title={translateBtnTitle}
+                              className="mt-1 shrink-0 rounded p-1.5 text-muted-foreground opacity-85 transition-opacity hover:bg-muted hover:text-foreground disabled:opacity-40"
+                              aria-label="Translate message"
+                            >
+                              {translationLoadingId === message.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Languages className="h-4 w-4" />
+                              )}
+                            </button>
+                          )}
                           <div
                             className={`flex min-w-0 flex-col gap-1 ${isOwn ? "items-end" : "items-start"}`}
                           >
@@ -2700,6 +2887,24 @@ export function ChatWindow({
                                 </div>
                               )}
                           </div>
+                          {canTranslateBubble && !isOwn && (
+                            <button
+                              type="button"
+                              onClick={() => void handleTranslateMessage(message)}
+                              disabled={
+                                !translationTargetLang || translationLoadingId === message.id
+                              }
+                              title={translateBtnTitle}
+                              className="mt-1 shrink-0 rounded p-1.5 text-muted-foreground opacity-85 transition-opacity hover:bg-muted hover:text-foreground disabled:opacity-40"
+                              aria-label="Translate message"
+                            >
+                              {translationLoadingId === message.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Languages className="h-4 w-4" />
+                              )}
+                            </button>
+                          )}
                         </div>
                       </div>
                     );

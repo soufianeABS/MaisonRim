@@ -22,6 +22,7 @@ import {
   ChevronDown,
   Bookmark,
   Loader2,
+  Languages,
 } from "lucide-react";
 import {
   useState,
@@ -835,6 +836,12 @@ export function UserList({
                   <Link href="/protected/reply-agents" className="flex items-center gap-2">
                     <Sparkles className="h-4 w-4" />
                     Reply Agents
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/protected/translation" className="flex items-center gap-2">
+                    <Languages className="h-4 w-4" />
+                    Translation
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
