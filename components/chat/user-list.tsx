@@ -404,7 +404,7 @@ export function UserList({
   const getMessagePreview = (user: ChatUser) => {
     const { isYou, body } = messagePreviewMeta(user);
     if (body === "No messages yet") return body;
-    return isYou ? `You: ${body}` : body;
+    return isYou ? `You : ${body}` : body;
   };
 
   const renderMessagePreview = (user: ChatUser): ReactNode => {
@@ -414,10 +414,10 @@ export function UserList({
       <>
         {isYou && (
           <span
-            className="mr-1.5 inline-flex shrink-0 items-center rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-800 shadow-sm dark:border-emerald-400/35 dark:bg-emerald-500/25 dark:text-emerald-100"
+            className="shrink-0 font-semibold text-emerald-600 dark:text-emerald-400"
             aria-label="You sent"
           >
-            You
+            You{" : "}
           </span>
         )}
         <span className="min-w-0 flex-1 truncate">{body}</span>
