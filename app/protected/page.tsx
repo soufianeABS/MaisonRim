@@ -1126,7 +1126,7 @@ export default function ChatPage() {
           </div>
           
           {/* Chat Window - Desktop */}
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
               <ChatWindow
               selectedUser={selectedUser}
               messages={messages}
@@ -1172,7 +1172,7 @@ export default function ChatPage() {
       </div>
           ) : (
             // Chat Window - Mobile
-            <div className="flex h-full min-h-0 w-full flex-col">
+            <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
               <ChatWindow
                 selectedUser={selectedUser}
                 messages={messages}

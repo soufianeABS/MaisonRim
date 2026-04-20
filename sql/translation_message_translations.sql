@@ -4,6 +4,9 @@
 ALTER TABLE public.user_settings
   ADD COLUMN IF NOT EXISTS translation_target_language TEXT;
 
+ALTER TABLE public.user_settings
+  ADD COLUMN IF NOT EXISTS translation_enabled BOOLEAN NOT NULL DEFAULT true;
+
 CREATE TABLE IF NOT EXISTS public.message_translations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   message_id TEXT NOT NULL REFERENCES public.messages (id) ON DELETE CASCADE,
@@ -18,6 +21,12 @@ CREATE INDEX IF NOT EXISTS idx_message_translations_user_lang
   ON public.message_translations (user_id, target_language);
 
 ALTER TABLE public.message_translations ENABLE ROW LEVEL SECURITY;
+
+-- Idempotent: safe to re-run if a previous attempt created policies but stopped later.
+DROP POLICY IF EXISTS "message_translations_select_own" ON public.message_translations;
+DROP POLICY IF EXISTS "message_translations_insert_own" ON public.message_translations;
+DROP POLICY IF EXISTS "message_translations_update_own" ON public.message_translations;
+DROP POLICY IF EXISTS "message_translations_delete_own" ON public.message_translations;
 
 CREATE POLICY "message_translations_select_own" ON public.message_translations
   FOR SELECT USING (auth.uid() = user_id);

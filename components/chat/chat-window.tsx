@@ -277,6 +277,10 @@ function GreenOutgoingTicks({ status }: { status: string | null }) {
 
 const QUICK_REACTION_EMOJIS = ["👍", "😊", "❤️", "😂", "😮", "😢", "🙏"];
 
+/** Prevents long URLs / unbroken strings from forcing horizontal scroll in flex layouts */
+const MESSAGE_BODY_TEXT_CLASS =
+  "min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed";
+
 /** Green API has no documented send for WhatsApp bubble reactions — API uses quoted emoji reply only. */
 function quickReactionButtonTitle(
   provider: ChatWindowProps["messagingProvider"],
@@ -402,6 +406,8 @@ export function ChatWindow({
   const [devInsertLoading, setDevInsertLoading] = useState(false);
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const [translationTargetLang, setTranslationTargetLang] = useState<string | null>(null);
+  /** When false, hide translate controls; null until prefs load. */
+  const [translationUiEnabled, setTranslationUiEnabled] = useState<boolean | null>(null);
   const [translationByMessageId, setTranslationByMessageId] = useState<Record<string, string>>(
     {},
   );
@@ -524,12 +530,15 @@ export function ChatWindow({
         });
         const data = await readResponseJson<{
           translation_target_language?: string | null;
+          translation_enabled?: boolean;
         }>(res);
         if (!res.ok) return;
         const lang = data.translation_target_language;
         setTranslationTargetLang(typeof lang === "string" && lang.length > 0 ? lang : null);
+        setTranslationUiEnabled(data.translation_enabled !== false);
       } catch {
         setTranslationTargetLang(null);
+        setTranslationUiEnabled(false);
       }
     })();
   }, []);
@@ -547,6 +556,10 @@ export function ChatWindow({
   }, [loadTranslationPrefs]);
 
   useEffect(() => {
+    if (translationUiEnabled !== true) {
+      setTranslationByMessageId({});
+      return;
+    }
     if (!translationTargetLang) {
       setTranslationByMessageId({});
       return;
@@ -583,7 +596,7 @@ export function ChatWindow({
     return () => {
       cancelled = true;
     };
-  }, [messages, translationTargetLang]);
+  }, [messages, translationTargetLang, translationUiEnabled]);
 
   // Load available ApiActions (Tag -> API mappings) once, so we can disable
   // the "Run action" button when no mapping exists for the tag.
@@ -1645,6 +1658,7 @@ export function ChatWindow({
 
   const handleTranslateMessage = useCallback(
     async (message: Message) => {
+      if (translationUiEnabled !== true) return;
       const md = parseMessageMediaJson(message);
       const text = getTranslatableText(message, md);
       if (!text || !translationTargetLang) return;
@@ -1676,7 +1690,7 @@ export function ChatWindow({
         setTranslationLoadingId(null);
       }
     },
-    [translationTargetLang],
+    [translationTargetLang, translationUiEnabled],
   );
 
   const renderTranslationLine = (message: Message, isOwn: boolean) => {
@@ -1684,7 +1698,7 @@ export function ChatWindow({
     if (!line) return null;
     return (
       <p
-        className={`mt-2 border-t pt-2 text-sm whitespace-pre-wrap break-words leading-relaxed ${
+        className={`mt-2 border-t pt-2 text-sm ${MESSAGE_BODY_TEXT_CLASS} ${
           isOwn ? "border-emerald-400/30 text-emerald-50/95" : "border-border text-muted-foreground"
         }`}
       >
@@ -1738,7 +1752,7 @@ export function ChatWindow({
       }
     }
 
-    const baseClasses = `max-w-[85%] min-w-0 px-4 py-3 rounded-2xl shadow-sm ${
+    const baseClasses = `max-w-[85%] min-w-0 w-full overflow-x-hidden px-4 py-3 rounded-2xl shadow-sm ${
       isOwn
         ? 'bg-emerald-600 text-white ml-4 ring-1 ring-emerald-700/30 dark:bg-emerald-700 dark:ring-emerald-900/40'
         : 'bg-white dark:bg-muted border border-border mr-4'
@@ -1854,7 +1868,7 @@ export function ChatWindow({
               </div>
             )}
             {mediaData?.caption && (
-              <p className="text-sm whitespace-pre-wrap break-words mb-2">
+              <p className={`text-sm mb-2 ${MESSAGE_BODY_TEXT_CLASS}`}>
                 {mediaData.caption}
               </p>
             )}
@@ -2064,7 +2078,7 @@ export function ChatWindow({
               </div>
             )}
             {mediaData?.caption && (
-              <p className="text-sm whitespace-pre-wrap break-words mb-2">
+              <p className={`text-sm mb-2 ${MESSAGE_BODY_TEXT_CLASS}`}>
                 {mediaData.caption}
               </p>
             )}
@@ -2121,7 +2135,7 @@ export function ChatWindow({
                     </div>
                   ) : mediaData.header.text ? (
                     <div className="mb-3">
-                      <p className="text-base font-semibold leading-relaxed">
+                      <p className={`text-base font-semibold ${MESSAGE_BODY_TEXT_CLASS}`}>
                         {mediaData.header.text}
                       </p>
                     </div>
@@ -2132,7 +2146,7 @@ export function ChatWindow({
               {/* Body Component */}
               {mediaData?.body && (
                 <div>
-                  <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+                  <p className={`text-sm ${MESSAGE_BODY_TEXT_CLASS}`}>
                     {mediaData.body.text || message.content}
                   </p>
                 </div>
@@ -2140,7 +2154,7 @@ export function ChatWindow({
 
               {/* If no structured data, show the processed content */}
               {!mediaData?.body && !mediaData?.header && (
-                <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+                <p className={`text-sm ${MESSAGE_BODY_TEXT_CLASS}`}>
                   {message.content}
                 </p>
               )}
@@ -2148,7 +2162,7 @@ export function ChatWindow({
               {/* Footer Component */}
               {mediaData?.footer && (
                 <div className="mt-2">
-                  <p className="text-xs opacity-75 leading-relaxed">
+                  <p className={`text-xs opacity-75 ${MESSAGE_BODY_TEXT_CLASS}`}>
                     {mediaData.footer.text}
                   </p>
                 </div>
@@ -2240,7 +2254,7 @@ export function ChatWindow({
         return (
           <div className={`${baseClasses} ${isOptimistic ? 'opacity-70' : ''} transition-opacity duration-300`}>
             {renderQuoteStripe(message, isOwn)}
-            <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+            <p className={`text-sm ${MESSAGE_BODY_TEXT_CLASS}`}>
               {message.content}
             </p>
             {renderTranslationLine(message, isOwn)}
@@ -2343,7 +2357,7 @@ export function ChatWindow({
 
   return (
     <div 
-      className="relative flex h-full min-h-0 flex-col bg-background"
+      className="relative flex h-full min-h-0 min-w-0 flex-col overflow-x-hidden bg-background"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -2457,10 +2471,10 @@ export function ChatWindow({
                 <Users className="h-5 w-5" />
               </AvatarFallback>
             </Avatar>
-            <div className="flex-1">
-              <h2 className="font-semibold text-foreground flex items-center gap-2">
-                {broadcastGroupName}
-                <span className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full">
+            <div className="min-w-0 flex-1">
+              <h2 className="flex min-w-0 items-center gap-2 font-semibold text-foreground">
+                <span className="min-w-0 truncate">{broadcastGroupName}</span>
+                <span className="shrink-0 text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full">
                   Broadcast
                 </span>
               </h2>
@@ -2492,11 +2506,11 @@ export function ChatWindow({
               </AvatarFallback>
             </Avatar>
             <div 
-              className="flex-1 cursor-pointer hover:bg-muted/50 rounded-lg p-2 -m-2 transition-colors"
+              className="min-w-0 flex-1 cursor-pointer hover:bg-muted/50 rounded-lg p-2 -m-2 transition-colors"
               onClick={() => setShowUserInfo(true)}
               title="View contact info"
             >
-              <h2 className="font-semibold text-foreground">{getDisplayName(selectedUser)}</h2>
+              <h2 className="truncate font-semibold text-foreground">{getDisplayName(selectedUser)}</h2>
               <p className="text-sm text-muted-foreground">
                 {isLoading || sendingMedia ? (
                   <span className="flex items-center gap-1">
@@ -2692,7 +2706,7 @@ export function ChatWindow({
         ref={messagesContainerRef}
         onScroll={onMessagesScroll}
         style={{ overflowAnchor: "none" }}
-        className="min-h-0 flex-1 overflow-y-auto p-4 bg-gradient-to-b from-emerald-50/40 to-blue-50/30 dark:from-emerald-950/15 dark:to-blue-950/10"
+        className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 bg-gradient-to-b from-emerald-50/40 to-blue-50/30 dark:from-emerald-950/15 dark:to-blue-950/10"
       >
         {!broadcastGroupName && isMessagesLoading && messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
@@ -2722,7 +2736,7 @@ export function ChatWindow({
             )}
           </div>
         ) : (
-          <div ref={messagesInnerRef} className="space-y-4">
+          <div ref={messagesInnerRef} className="min-w-0 space-y-4">
             {Object.entries(groupedMessages).map(([date, dayMessages]) => (
               <div key={date}>
                 {/* Date Separator */}
@@ -2747,6 +2761,8 @@ export function ChatWindow({
                     const translateBtnTitle = translationTargetLang
                       ? `Translate (${translationTargetLang})`
                       : "Set target language: Tools → Translation";
+                    const showTranslateControl =
+                      canTranslateBubble && translationUiEnabled === true;
 
                     return (
                       <div key={message.id}>
@@ -2764,7 +2780,7 @@ export function ChatWindow({
                         )}
                         
                         <div
-                          className={`flex items-start gap-1 ${isOwn ? "justify-end" : "justify-start"}`}
+                          className={`flex min-w-0 max-w-full items-start gap-1 ${isOwn ? "justify-end" : "justify-start"}`}
                         >
                           {isLocalhostDev &&
                             !message.id.startsWith("optimistic_") && (
@@ -2782,7 +2798,7 @@ export function ChatWindow({
                                 )}
                               </button>
                             )}
-                          {canTranslateBubble && isOwn && (
+                          {showTranslateControl && isOwn && (
                             <button
                               type="button"
                               onClick={() => void handleTranslateMessage(message)}
@@ -2887,7 +2903,7 @@ export function ChatWindow({
                                 </div>
                               )}
                           </div>
-                          {canTranslateBubble && !isOwn && (
+                          {showTranslateControl && !isOwn && (
                             <button
                               type="button"
                               onClick={() => void handleTranslateMessage(message)}

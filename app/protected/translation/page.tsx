@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { TRANSLATION_LANGUAGES } from "@/lib/translation-languages";
 import { readResponseJson } from "@/lib/read-response-json";
@@ -23,6 +24,7 @@ export default function TranslationToolPage() {
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [value, setValue] = useState<string>("");
+  const [enabled, setEnabled] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -35,12 +37,14 @@ export default function TranslationToolPage() {
       });
       const data = await readResponseJson<{
         translation_target_language?: string | null;
+        translation_enabled?: boolean;
         warning?: string;
         error?: string;
       }>(res);
       if (!res.ok) throw new Error(data.error || "Failed to load preferences");
       if (data.warning) setWarning(data.warning);
       setValue(data.translation_target_language || "");
+      setEnabled(data.translation_enabled !== false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
       setValue("");
@@ -63,14 +67,19 @@ export default function TranslationToolPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           translation_target_language: value || null,
+          translation_enabled: enabled,
         }),
       });
       const data = await readResponseJson<{
         translation_target_language?: string | null;
+        translation_enabled?: boolean;
         error?: string;
       }>(res);
       if (!res.ok) throw new Error(data.error || "Failed to save");
       setValue(data.translation_target_language || "");
+      if (typeof data.translation_enabled === "boolean") {
+        setEnabled(data.translation_enabled);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save");
     } finally {
@@ -119,15 +128,34 @@ export default function TranslationToolPage() {
                   {error}
                 </p>
               )}
+              <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 px-3 py-3">
+                <Checkbox
+                  id="translation-enabled"
+                  checked={enabled}
+                  onCheckedChange={(v) => setEnabled(v === true)}
+                  aria-describedby="translation-enabled-hint"
+                />
+                <div className="min-w-0 space-y-1">
+                  <Label htmlFor="translation-enabled" className="cursor-pointer text-sm font-medium leading-none">
+                    Enable in-chat translation
+                  </Label>
+                  <p id="translation-enabled-hint" className="text-xs text-muted-foreground">
+                    When off, the translate icon is hidden next to messages. Your saved translations
+                    stay in the database when you turn this back on.
+                  </p>
+                </div>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="translation-lang">Target language</Label>
                 <select
                   id="translation-lang"
                   value={value}
+                  disabled={!enabled}
                   onChange={(e: ChangeEvent<HTMLSelectElement>) => setValue(e.target.value)}
                   className={cn(
                     "themed-native-select flex h-9 w-full max-w-md rounded-md border border-input px-3 py-1 text-sm shadow-sm",
                     "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                    !enabled && "cursor-not-allowed opacity-60",
                   )}
                 >
                   <option value="">None (disable translate)</option>

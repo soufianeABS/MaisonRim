@@ -31,6 +31,7 @@ import {
   useCallback,
   type Dispatch,
   type SetStateAction,
+  type ReactNode,
 } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -366,36 +367,62 @@ export function UserList({
     [lastReplyFilter, currentUserId],
   );
 
-  const getMessagePreview = (user: ChatUser) => {
+  const messagePreviewMeta = (user: ChatUser) => {
     if (!user.last_message && !user.last_message_type) {
-      return "No messages yet";
+      return { isYou: false, body: "No messages yet" as const };
     }
 
-    // Handle media messages
-    if (user.last_message_type && user.last_message_type !== 'text') {
-      const isFromCurrentUser = user.last_message_sender === currentUserId;
-      const prefix = isFromCurrentUser ? "You: " : "";
-      
-      switch (user.last_message_type) {
-        case 'image':
-          return `${prefix}📷 Photo`;
-        case 'video':
-          return `${prefix}🎥 Video`;
-        case 'audio':
-          return `${prefix}🎵 Audio`;
-        case 'document':
-          return `${prefix}📄 Document`;
-        default:
-          return `${prefix}📎 Media`;
-      }
-    }
-
-    // Handle text messages
-    const message = user.last_message || "";
     const isFromCurrentUser = user.last_message_sender === currentUserId;
-    const prefix = isFromCurrentUser ? "You: " : "";
-    
-    return `${prefix}${message.length > 30 ? message.substring(0, 30) + "..." : message}`;
+
+    if (user.last_message_type && user.last_message_type !== "text") {
+      let label = "";
+      switch (user.last_message_type) {
+        case "image":
+          label = "📷 Photo";
+          break;
+        case "video":
+          label = "🎥 Video";
+          break;
+        case "audio":
+          label = "🎵 Audio";
+          break;
+        case "document":
+          label = "📄 Document";
+          break;
+        default:
+          label = "📎 Media";
+      }
+      return { isYou: isFromCurrentUser, body: label };
+    }
+
+    const message = user.last_message || "";
+    const truncated =
+      message.length > 30 ? `${message.substring(0, 30)}...` : message;
+    return { isYou: isFromCurrentUser, body: truncated };
+  };
+
+  const getMessagePreview = (user: ChatUser) => {
+    const { isYou, body } = messagePreviewMeta(user);
+    if (body === "No messages yet") return body;
+    return isYou ? `You: ${body}` : body;
+  };
+
+  const renderMessagePreview = (user: ChatUser): ReactNode => {
+    const { isYou, body } = messagePreviewMeta(user);
+    if (body === "No messages yet") return body;
+    return (
+      <>
+        {isYou && (
+          <span
+            className="mr-1.5 inline-flex shrink-0 items-center rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-800 shadow-sm dark:border-emerald-400/35 dark:bg-emerald-500/25 dark:text-emerald-100"
+            aria-label="You sent"
+          >
+            You
+          </span>
+        )}
+        <span className="min-w-0 flex-1 truncate">{body}</span>
+      </>
+    );
   };
 
   // Sort conversations newest-first (stable when opening/marking read)
@@ -1332,7 +1359,7 @@ export function UserList({
                   </div>
                   
                   <p
-                    className={`text-sm truncate mt-1 ${
+                    className={`text-sm mt-1 flex min-w-0 items-center ${
                       messageSearchMeta.has(contactSearchKey(user.id))
                         ? "text-foreground"
                         : `text-muted-foreground ${
@@ -1353,12 +1380,12 @@ export function UserList({
                             : ""}
                           :{" "}
                         </span>
-                        <span className="text-muted-foreground">
+                        <span className="min-w-0 flex-1 truncate text-muted-foreground">
                           {messageSearchMeta.get(contactSearchKey(user.id))!.preview || "—"}
                         </span>
                       </>
                     ) : (
-                      getMessagePreview(user)
+                      renderMessagePreview(user)
                     )}
                   </p>
                 </div>
