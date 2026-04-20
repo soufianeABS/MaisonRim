@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 
+import { CustomThemeProvider } from "@/components/custom-theme-provider";
+
 export default async function ProtectedLayout({
   children,
 }: {
@@ -18,8 +20,8 @@ export default async function ProtectedLayout({
   }
 
   return (
-    <div className="h-screen bg-background">
-      {children}
-    </div>
+    <CustomThemeProvider>
+      <div className="h-screen bg-background">{children}</div>
+    </CustomThemeProvider>
   );
 }

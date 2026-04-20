@@ -231,10 +231,10 @@ function GreenOutgoingTicks({ status }: { status: string | null }) {
   const isRead = status === "read";
   const isDelivered = status === "delivered" || isRead;
   const isFailed = status === "failed";
-  /** Read = bright yellow ticks + dark rim + soft yellow glow on emerald-600 bubbles */
+  /** Read / delivered tick colors come from theme (chat-ticks-read / chat-ticks-sent). */
   const tickClass = isRead
-    ? "text-yellow-200 [filter:drop-shadow(0_0.5px_0_rgba(6,78,59,0.95))_drop-shadow(0_1.5px_2px_rgba(0,0,0,0.4))_drop-shadow(0_0_10px_rgba(250,204,21,0.75))]"
-    : "text-emerald-100/90";
+    ? "text-chat-ticks-read drop-shadow-[0_0.5px_0_rgba(0,0,0,0.45)]"
+    : "text-chat-ticks-sent";
   const readStroke = isRead ? 3 : 2.5;
 
   if (isFailed) {
@@ -1116,20 +1116,20 @@ export function ChatWindow({
       <div
         className={`mb-2 rounded-lg overflow-hidden border-l-4 pl-3 py-2 pr-2 text-left ${
           isOwn
-            ? "border-white/70 bg-black/15"
-            : "border-emerald-600/80 bg-muted/70 dark:bg-muted/40"
+            ? "border-chat-bubble-sent-fg/70 bg-black/15"
+            : "border-chat-you/80 bg-muted/70 dark:bg-muted/40"
         }`}
       >
         <div
           className={`text-xs font-semibold ${
-            isOwn ? "text-emerald-50" : "text-emerald-700 dark:text-emerald-400"
+            isOwn ? "text-chat-bubble-sent-fg" : "text-chat-you"
           }`}
         >
           {label}
         </div>
         <div
-          className={`text-xs line-clamp-2 mt-0.5 break-words ${
-            isOwn ? "text-emerald-50/95" : "text-muted-foreground"
+          className={`mt-0.5 line-clamp-2 break-words text-xs ${
+            isOwn ? "text-chat-bubble-sent-fg/95" : "text-muted-foreground"
           }`}
         >
           {body}
@@ -1699,7 +1699,9 @@ export function ChatWindow({
     return (
       <p
         className={`mt-2 border-t pt-2 text-sm ${MESSAGE_BODY_TEXT_CLASS} ${
-          isOwn ? "border-emerald-400/30 text-emerald-50/95" : "border-border text-muted-foreground"
+          isOwn
+            ? "border-chat-bubble-sent-fg/30 text-chat-bubble-sent-fg/95"
+            : "border-border text-muted-foreground"
         }`}
       >
         {line}
@@ -1725,7 +1727,7 @@ export function ChatWindow({
         /* ignore */
       }
     }
-    const color = isOwn ? "text-emerald-50/90" : "text-muted-foreground";
+    const color = isOwn ? "text-chat-bubble-sent-fg/90" : "text-muted-foreground";
     return (
       <span className={`inline-flex items-center gap-1.5 ${color}`}>
         <span>{formatTime(message.timestamp)}</span>
@@ -1754,8 +1756,8 @@ export function ChatWindow({
 
     const baseClasses = `max-w-[85%] min-w-0 w-full overflow-x-hidden px-4 py-3 rounded-2xl shadow-sm ${
       isOwn
-        ? 'bg-emerald-600 text-white ml-4 ring-1 ring-emerald-700/30 dark:bg-emerald-700 dark:ring-emerald-900/40'
-        : 'bg-white dark:bg-muted border border-border mr-4'
+        ? "ml-4 bg-chat-bubble-sent text-chat-bubble-sent-fg ring-1 ring-chat-bubble-sent-ring/40"
+        : "mr-4 border border-border bg-chat-bubble-received text-chat-bubble-received-fg"
     }`;
 
     const isRefreshing = refreshingUrls.has(message.id);
@@ -1886,7 +1888,7 @@ export function ChatWindow({
           <div className={baseClasses}>
             {renderQuoteStripe(message, isOwn)}
             <div className="flex items-center gap-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl mb-2 min-w-0 w-full max-w-full sm:min-w-[280px] sm:max-w-[400px]">
-              <div className={`p-3 rounded-full ${isOwn ? 'bg-emerald-700' : 'bg-blue-500'}`}>
+              <div className={`rounded-full p-3 ${isOwn ? "bg-chat-bubble-sent-ring" : "bg-blue-500"}`}>
                 <FileText className="h-6 w-6 text-white" />
               </div>
               <div className="flex-1 min-w-0">
@@ -1904,7 +1906,7 @@ export function ChatWindow({
                 <Button
                   size="sm"
                   variant="ghost"
-                  className={`p-2 h-10 w-10 ${isOwn ? 'hover:bg-emerald-800/40' : 'hover:bg-gray-200'}`}
+                  className={`h-10 w-10 p-2 ${isOwn ? "hover:bg-black/20" : "hover:bg-gray-200"}`}
                   onClick={() =>
                     downloadMedia(
                       effectiveMediaUrl,
@@ -1925,7 +1927,7 @@ export function ChatWindow({
                 <Button
                   size="sm"
                   variant="ghost"
-                  className={`p-2 h-10 w-10 ${isOwn ? 'hover:bg-emerald-800/40' : 'hover:bg-gray-200'}`}
+                  className={`h-10 w-10 p-2 ${isOwn ? "hover:bg-black/20" : "hover:bg-gray-200"}`}
                   onClick={() => refreshMediaUrl(message.id)}
                   disabled={isRefreshing}
                 >
@@ -1953,7 +1955,7 @@ export function ChatWindow({
               <Button
                 size="sm"
                 variant="ghost"
-                className={`p-3 rounded-full ${isOwn ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-blue-500 hover:bg-blue-600'} text-white`}
+                className={`rounded-full p-3 text-white ${isOwn ? "bg-chat-bubble-sent-ring hover:bg-black/25" : "bg-blue-500 hover:bg-blue-600"}`}
                 onClick={() => effectiveMediaUrl && handleAudioPlay(message.id, effectiveMediaUrl)}
                 disabled={!effectiveMediaUrl || !mediaData?.s3_uploaded || isRefreshing}
               >
@@ -1990,7 +1992,7 @@ export function ChatWindow({
                   <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
                     <div 
                       className={`h-full transition-all duration-300 ${
-                        isOwn ? 'bg-emerald-300/90' : 'bg-blue-400'
+                        isOwn ? "bg-chat-bubble-sent-fg/40" : "bg-blue-400"
                       }`}
                       style={{ width: `${progress}%` }}
                     />
@@ -2263,8 +2265,8 @@ export function ChatWindow({
             >
               {messageTimestampRow(message, isOwn)}
               {isOptimistic && isOwn && (
-                <span className="text-xs text-emerald-100 flex items-center gap-1">
-                  <span className="inline-block w-1 h-1 bg-emerald-200 rounded-full animate-pulse"></span>
+                <span className="flex items-center gap-1 text-xs text-chat-ticks-sent">
+                  <span className="inline-block h-1 w-1 animate-pulse rounded-full bg-chat-bubble-sent-fg/80"></span>
                   Sending...
                 </span>
               )}
@@ -2467,14 +2469,14 @@ export function ChatWindow({
           <>
             {/* Broadcast Group Header */}
             <Avatar className="h-10 w-10">
-              <AvatarFallback className="bg-emerald-600 text-white font-semibold">
+              <AvatarFallback className="bg-chat-menu font-semibold text-chat-menu-fg">
                 <Users className="h-5 w-5" />
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0 flex-1">
               <h2 className="flex min-w-0 items-center gap-2 font-semibold text-foreground">
                 <span className="min-w-0 truncate">{broadcastGroupName}</span>
-                <span className="shrink-0 text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full">
+                <span className="shrink-0 rounded-full bg-chat-menu/20 px-2 py-0.5 text-xs text-chat-you">
                   Broadcast
                 </span>
               </h2>
@@ -2501,7 +2503,7 @@ export function ChatWindow({
                   referrerPolicy="no-referrer"
                 />
               ) : null}
-              <AvatarFallback className="bg-emerald-100 text-emerald-800 font-semibold">
+              <AvatarFallback className="bg-chat-menu/15 font-semibold text-chat-menu">
                 {selectedUser.name.substring(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
@@ -2706,7 +2708,7 @@ export function ChatWindow({
         ref={messagesContainerRef}
         onScroll={onMessagesScroll}
         style={{ overflowAnchor: "none" }}
-        className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 bg-gradient-to-b from-emerald-50/40 to-blue-50/30 dark:from-emerald-950/15 dark:to-blue-950/10"
+        className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-gradient-to-b from-chat-you/10 to-blue-50/30 p-4 dark:from-chat-you/10 dark:to-blue-950/10"
       >
         {!broadcastGroupName && isMessagesLoading && messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
@@ -2843,7 +2845,7 @@ export function ChatWindow({
                                     {onSendReaction && (
                                       <button
                                         type="button"
-                                        className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50"
+                                        className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-chat-menu disabled:opacity-50"
                                         aria-label={
                                           messagingProvider === "green_api"
                                             ? "Emoji replies (quoted)"
@@ -2937,7 +2939,7 @@ export function ChatWindow({
         {replyingTo && (
           <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-2 text-sm">
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+              <p className="text-xs font-medium text-chat-you">
                 Replying to
               </p>
               <p className="truncate text-muted-foreground">{replyPreviewSnippet(replyingTo)}</p>
@@ -3030,14 +3032,14 @@ export function ChatWindow({
               }
               title="Enter to send · Shift+Enter for a new line · Paste (Ctrl+V) image to attach"
               rows={1}
-              className="min-h-[42px] max-h-[160px] w-full resize-none overflow-y-auto rounded-2xl border-border py-2.5 pl-11 pr-4 focus-visible:ring-emerald-500"
+              className="min-h-[42px] max-h-[160px] w-full resize-none overflow-y-auto rounded-2xl border-border py-2.5 pl-11 pr-4 focus-visible:ring-chat-menu"
               maxLength={1000}
               disabled={isLoading || sendingMedia}
               autoFocus={!isMobile}
             />
             <button
               type="button"
-              className="absolute bottom-2 left-2 z-10 rounded-full p-1.5 text-muted-foreground opacity-70 transition-colors hover:bg-muted hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:pointer-events-none disabled:opacity-40"
+              className="absolute bottom-2 left-2 z-10 rounded-full p-1.5 text-muted-foreground opacity-70 transition-colors hover:bg-muted hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-chat-menu disabled:pointer-events-none disabled:opacity-40"
               title="Insert emoji"
               aria-expanded={composerEmojiPickerOpen}
               aria-haspopup="dialog"
@@ -3078,7 +3080,7 @@ export function ChatWindow({
           <Button 
             type="submit" 
             disabled={!messageInput.trim() || isLoading || sendingMedia}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            className="rounded-full bg-chat-menu px-6 py-2 text-chat-menu-fg transition-all hover:bg-chat-menu-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isLoading || sendingMedia ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -3092,9 +3094,9 @@ export function ChatWindow({
 
       {/* Drag and Drop Overlay */}
       {isDragging && (
-        <div className="absolute inset-0 bg-emerald-500/20 flex items-center justify-center z-40 backdrop-blur-sm">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 shadow-2xl border-2 border-emerald-500/70 border-dashed">
-            <Paperclip className="h-16 w-16 text-emerald-600 mx-auto mb-4" />
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-chat-you/20 backdrop-blur-sm">
+          <div className="rounded-2xl border-2 border-dashed border-chat-you/70 bg-white p-8 shadow-2xl dark:bg-gray-800">
+            <Paperclip className="mx-auto mb-4 h-16 w-16 text-chat-you" />
             <p className="text-2xl font-semibold text-gray-900 dark:text-white text-center mb-2">
               Drop files to send
             </p>

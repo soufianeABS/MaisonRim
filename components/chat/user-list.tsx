@@ -23,6 +23,7 @@ import {
   Bookmark,
   Loader2,
   Languages,
+  Palette,
 } from "lucide-react";
 import {
   useState,
@@ -414,7 +415,7 @@ export function UserList({
       <>
         {isYou && (
           <span
-            className="shrink-0 font-semibold text-emerald-600 dark:text-emerald-400"
+            className="shrink-0 font-semibold text-chat-you"
             aria-label="You sent"
           >
             You{" : "}
@@ -785,7 +786,7 @@ export function UserList({
               </Button>
               <Button
                 type="button"
-                className="bg-green-600 hover:bg-green-700 text-white"
+                className="bg-chat-menu text-chat-menu-fg hover:bg-chat-menu-hover"
                 disabled={syncingGreenHistory || syncGreenResult?.ok === true}
                 onClick={() => void runSyncGreenHistory()}
               >
@@ -796,7 +797,7 @@ export function UserList({
         </div>
       )}
       {/* Header */}
-      <div className="p-4 border-b border-border bg-green-600 text-white">
+      <div className="border-b border-border bg-chat-menu p-4 text-chat-menu-fg">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <MessageCircle className="h-6 w-6" />
@@ -807,7 +808,7 @@ export function UserList({
               variant="ghost"
               size="sm"
               onClick={() => setShowNewChat(true)}
-              className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
+              className="rounded-full p-2 text-chat-menu-fg transition-colors hover:bg-chat-menu-hover"
               title="New chat"
             >
               <Plus className="h-5 w-5" />
@@ -816,7 +817,7 @@ export function UserList({
               variant="ghost"
               size="sm"
               onClick={handleCreateGroup}
-              className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
+              className="rounded-full p-2 text-chat-menu-fg transition-colors hover:bg-chat-menu-hover"
               title="Create broadcast group"
             >
               <Users className="h-5 w-5" />
@@ -826,7 +827,7 @@ export function UserList({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
+                  className="rounded-full p-2 text-chat-menu-fg transition-colors hover:bg-chat-menu-hover"
                   title="Tools"
                   disabled={syncingGreenHistory}
                 >
@@ -866,6 +867,12 @@ export function UserList({
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
+                  <Link href="/protected/theme" className="flex items-center gap-2">
+                    <Palette className="h-4 w-4" />
+                    Theme & colors
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
                   <Link href="/protected/translation" className="flex items-center gap-2">
                     <Languages className="h-4 w-4" />
                     Translation
@@ -895,18 +902,18 @@ export function UserList({
               <Button
                 variant="ghost"
                 size="sm"
-                className="p-2 text-white hover:bg-green-700 rounded-full transition-colors"
+                className="rounded-full p-2 text-chat-menu-fg transition-colors hover:bg-chat-menu-hover"
                 title="WhatsApp Setup"
               >
                 <Settings className="h-5 w-5" />
               </Button>
             </Link>
-            <div className="[&>button]:text-white [&>button]:hover:bg-green-700">
+            <div className="[&>button]:text-chat-menu-fg [&>button]:hover:bg-chat-menu-hover">
               <ThemeSwitcher />
             </div>
             <button
               onClick={handleLogout}
-              className="p-2 hover:bg-green-700 rounded-full transition-colors"
+              className="rounded-full p-2 text-chat-menu-fg transition-colors hover:bg-chat-menu-hover"
               title="Logout"
             >
               <LogOut className="h-5 w-5" />
@@ -998,7 +1005,7 @@ export function UserList({
               <Button
                 onClick={handleCreateNewChat}
                 disabled={isCreatingChat || newUsers.every(u => !u.phoneNumber.trim())}
-                className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                className="flex-1 bg-chat-menu text-chat-menu-fg hover:bg-chat-menu-hover"
                 size="sm"
               >
                 {isCreatingChat ? "Adding..." : `Add Contact${newUsers.filter(u => u.phoneNumber.trim()).length > 1 ? 's' : ''}`}
@@ -1101,7 +1108,7 @@ export function UserList({
             placeholder="Search name, phone, messages, or contact data…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-10 py-2 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-green-500"
+            className="w-full rounded-lg border border-border bg-background py-2 pl-10 pr-10 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-chat-menu"
             aria-busy={messageSearchLoading}
           />
           {messageSearchLoading && (
@@ -1193,7 +1200,7 @@ export function UserList({
                 "border-b border-border p-4 cursor-pointer select-none",
                 "transition-colors duration-100 hover:bg-muted/50",
                 selectedUser?.id === user.id &&
-                  "bg-muted ring-2 ring-inset ring-green-500/55 shadow-[inset_0_1px_0_0_rgba(16,185,129,0.12)]"
+                  "bg-muted shadow-[inset_0_1px_0_0_hsl(var(--chat-you)/0.12)] ring-2 ring-inset ring-chat-you/55"
               )}
               aria-current={selectedUser?.id === user.id ? "true" : undefined}
               onClick={() => onUserSelect(user)}
@@ -1213,7 +1220,7 @@ export function UserList({
                       }}
                     />
                   ) : null}
-                  <AvatarFallback className="bg-green-100 text-green-700 font-semibold">
+                  <AvatarFallback className="bg-chat-menu/15 font-semibold text-chat-menu">
                     {getDisplayName(user).charAt(0).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
@@ -1351,7 +1358,7 @@ export function UserList({
                       );
                     })()}
                       {(user.unread_count || 0) > 0 && (
-                        <div className="bg-green-600 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-medium shadow-md animate-scale-in">
+                        <div className="flex h-5 w-5 animate-scale-in items-center justify-center rounded-full bg-chat-menu text-xs font-medium text-chat-menu-fg shadow-md">
                           {user.unread_count! > 99 ? '99+' : user.unread_count}
                         </div>
                       )}
@@ -1373,7 +1380,7 @@ export function UserList({
                   >
                     {messageSearchMeta.has(contactSearchKey(user.id)) ? (
                       <>
-                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                        <span className="font-medium text-chat-you">
                           Match
                           {messageSearchMeta.get(contactSearchKey(user.id))!.matchCount > 1
                             ? ` (${messageSearchMeta.get(contactSearchKey(user.id))!.matchCount})`

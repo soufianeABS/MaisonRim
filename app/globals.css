@@ -29,6 +29,17 @@
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
     --radius: 0.5rem;
+    --chat-you: 160 84% 36%;
+    --chat-menu: 142 71% 45%;
+    --chat-menu-hover: 142 76% 36%;
+    --chat-menu-fg: 0 0% 100%;
+    --chat-bubble-sent: 160 84% 39%;
+    --chat-bubble-sent-fg: 0 0% 100%;
+    --chat-bubble-sent-ring: 160 63% 27%;
+    --chat-bubble-received: 0 0% 100%;
+    --chat-bubble-received-fg: 0 0% 3.9%;
+    --chat-ticks-sent: 160 55% 88%;
+    --chat-ticks-read: 48 96% 73%;
   }
   .dark {
     --background: 0 0% 3.9%;
@@ -55,6 +66,17 @@
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
+    --chat-you: 160 72% 45%;
+    --chat-menu: 142 71% 45%;
+    --chat-menu-hover: 142 76% 36%;
+    --chat-menu-fg: 0 0% 100%;
+    --chat-bubble-sent: 160 64% 35%;
+    --chat-bubble-sent-fg: 0 0% 100%;
+    --chat-bubble-sent-ring: 160 50% 22%;
+    --chat-bubble-received: 0 0% 14.9%;
+    --chat-bubble-received-fg: 0 0% 98%;
+    --chat-ticks-sent: 160 45% 75%;
+    --chat-ticks-read: 48 96% 73%;
   }
 }
 
