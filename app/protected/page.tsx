@@ -84,6 +84,29 @@ function isMessageFromCurrentUser(
   return msg.sender_id === currentUserId;
 }
 
+/** Compare contact keys when one side may include +, spaces, or @suffix noise. */
+function sameConversationContactId(a: string, b: string): boolean {
+  const d = (s: string) => s.replace(/\D/g, "");
+  return d(a) === d(b) && d(a).length > 0;
+}
+
+/**
+ * Whether a messages row belongs to the open 1:1 thread with `contactId`.
+ * Supports canonical rows (contact → owner) and legacy rows (owner → contact).
+ */
+function messageBelongsToContactThread(
+  row: Pick<MessagePayload, "sender_id" | "receiver_id">,
+  ownerId: string,
+  contactId: string,
+): boolean {
+  return (
+    (row.receiver_id === ownerId &&
+      sameConversationContactId(row.sender_id, contactId)) ||
+    (row.sender_id === ownerId &&
+      sameConversationContactId(row.receiver_id, contactId))
+  );
+}
+
 interface UnreadConversation {
   conversation_id: string;
   display_name: string;
@@ -127,6 +150,22 @@ export default function ChatPage() {
     new Map<string, { messages: Message[]; at: number }>(),
   );
   const CACHE_TTL_MS = 90_000;
+  const usersRef = useRef<ChatUser[]>([]);
+  const selectedUserRef = useRef<ChatUser | null>(null);
+  const broadcastGroupIdRef = useRef<string | null>(null);
+  const fetchUsersRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    usersRef.current = users;
+  }, [users]);
+
+  useEffect(() => {
+    selectedUserRef.current = selectedUser;
+  }, [selectedUser]);
+
+  useEffect(() => {
+    broadcastGroupIdRef.current = broadcastGroupId;
+  }, [broadcastGroupId]);
 
   const mapMessageRows = useCallback(
     (rows: unknown[]): Message[] => {
@@ -323,6 +362,8 @@ export default function ChatPage() {
       }
     };
 
+    fetchUsersRef.current = fetchUsers;
+
     const preloadUnreadConversations = async () => {
       try {
         console.log('Preloading unread conversations...');
@@ -384,6 +425,15 @@ export default function ChatPage() {
       })
       .subscribe();
 
+    let messagesFetchDebounce: ReturnType<typeof setTimeout> | null = null;
+    const scheduleMessagesListRefresh = () => {
+      if (messagesFetchDebounce) clearTimeout(messagesFetchDebounce);
+      messagesFetchDebounce = setTimeout(() => {
+        messagesFetchDebounce = null;
+        void fetchUsers();
+      }, 600);
+    };
+
     // Set up real-time subscription for messages table changes
     const messagesSubscription = supabase
       .channel('messages-global-channel-optimized')
@@ -394,50 +444,80 @@ export default function ChatPage() {
       }, (payload) => {
         console.log('Messages table change:', payload.eventType);
         
-        // Update specific user in list based on message change
-        const message = payload.new as MessagePayload;
-        if (message) {
-          const otherUserId = message.sender_id === user?.id ? message.receiver_id : message.sender_id;
-          
-          // Update the specific user's last message and unread count
-          setUsers((prevUsers) => {
-            const updatedUsers = prevUsers.map(u => {
-              if (u.id === otherUserId) {
-                const isFromMe = isMessageFromCurrentUser(message, user?.id ?? '');
-                // Don't increment unread count if this conversation is currently open
-                const isCurrentlyViewing = selectedUser?.id === otherUserId;
-                const shouldIncrementUnread = !isFromMe && !isCurrentlyViewing;
-                
+        const message = payload.new as MessagePayload | null;
+        const oldRow = payload.old as MessagePayload | null;
+        const ownerId = user?.id ?? '';
+        const effective =
+          message?.sender_id && message?.receiver_id
+            ? message
+            : oldRow?.sender_id && oldRow?.receiver_id
+              ? oldRow
+              : null;
+
+        if (effective && ownerId) {
+          const otherUserId =
+            effective.sender_id === ownerId
+              ? effective.receiver_id
+              : effective.sender_id;
+
+          const viewingId = selectedUserRef.current?.id ?? null;
+          const isCurrentlyViewing =
+            viewingId != null &&
+            sameConversationContactId(viewingId, otherUserId);
+
+          const listSnapshot = usersRef.current;
+          const hadConversation = listSnapshot.some((u) =>
+            sameConversationContactId(u.id, otherUserId),
+          );
+
+          if (payload.eventType === 'INSERT' && !hadConversation) {
+            void fetchUsers();
+          }
+
+          if (message) {
+            setUsers((prevUsers) => {
+              const updatedUsers = prevUsers.map((u) => {
+                if (!sameConversationContactId(u.id, otherUserId)) return u;
+
+                const isFromMe = isMessageFromCurrentUser(message, ownerId);
+                const shouldIncrementUnread =
+                  !isFromMe && !isCurrentlyViewing;
+
                 return {
                   ...u,
                   last_message: message.content || '',
                   last_message_time: message.timestamp,
                   last_message_type: message.message_type || 'text',
-                  last_message_sender: isFromMe ? (user?.id ?? '') : message.sender_id,
-                  // Increment unread count only if message is from other user and not currently viewing
-                  unread_count: shouldIncrementUnread ? (u.unread_count || 0) + 1 : u.unread_count
+                  last_message_sender: isFromMe ? ownerId : message.sender_id,
+                  unread_count: shouldIncrementUnread
+                    ? (u.unread_count || 0) + 1
+                    : u.unread_count,
                 };
-              }
-              return u;
+              });
+
+              return updatedUsers.sort((a, b) => {
+                if ((a.unread_count || 0) > 0 && (b.unread_count || 0) === 0)
+                  return -1;
+                if ((a.unread_count || 0) === 0 && (b.unread_count || 0) > 0)
+                  return 1;
+                const aTime = new Date(
+                  a.last_message_time || a.last_active,
+                ).getTime();
+                const bTime = new Date(
+                  b.last_message_time || b.last_active,
+                ).getTime();
+                return bTime - aTime;
+              });
             });
-            
-            // Re-sort users after update (unread first, then by time)
-            return updatedUsers.sort((a, b) => {
-              if ((a.unread_count || 0) > 0 && (b.unread_count || 0) === 0) return -1;
-              if ((a.unread_count || 0) === 0 && (b.unread_count || 0) > 0) return 1;
-              const aTime = new Date(a.last_message_time || a.last_active).getTime();
-              const bTime = new Date(b.last_message_time || b.last_active).getTime();
-              return bTime - aTime;
-            });
-          });
+          }
         }
-        
-        // Also debounce a full refresh as fallback
-        setTimeout(fetchUsers, 2000);
+
+        scheduleMessagesListRefresh();
       })
       .subscribe();
 
     return () => {
+      if (messagesFetchDebounce) clearTimeout(messagesFetchDebounce);
       usersSubscription.unsubscribe();
       messagesSubscription.unsubscribe();
     };
@@ -502,10 +582,11 @@ export default function ChatPage() {
       }, (payload) => {
         const newMessage = payload.new as MessagePayload;
         
-        // Messages are stored as: sender_id = contact phone, receiver_id = owner user id (both directions)
-        const isRelevantMessage =
-          newMessage.receiver_id === user.id &&
-          newMessage.sender_id === selectedUser.id;
+        const isRelevantMessage = messageBelongsToContactThread(
+          newMessage,
+          user.id,
+          selectedUser.id,
+        );
         
         if (isRelevantMessage) {
           const sentByMe = isMessageFromCurrentUser(newMessage, user.id);
@@ -560,10 +641,11 @@ export default function ChatPage() {
       }, (payload) => {
         const updatedMessage = payload.new as MessagePayload;
         
-        // Messages are stored as: sender_id = contact phone, receiver_id = owner user id (both directions)
-        const isRelevantMessage =
-          updatedMessage.receiver_id === user.id &&
-          updatedMessage.sender_id === selectedUser.id;
+        const isRelevantMessage = messageBelongsToContactThread(
+          updatedMessage,
+          user.id,
+          selectedUser.id,
+        );
         
         if (isRelevantMessage) {
           const messageWithFlag: Message = {
@@ -595,6 +677,44 @@ export default function ChatPage() {
       messagesSubscription.unsubscribe();
     };
   }, [selectedUser, user, supabase, mapMessageRows]);
+
+  // After tab sleep / reconnect, resync sidebar + open thread (Realtime can miss events while hidden).
+  useEffect(() => {
+    if (!user) return;
+
+    const syncAfterResume = () => {
+      if (document.visibilityState !== "visible") return;
+      void fetchUsersRef.current?.();
+      const sel = selectedUserRef.current;
+      if (!sel || broadcastGroupIdRef.current) return;
+      void (async () => {
+        const { data, error } = await supabase.rpc("get_conversation_messages", {
+          other_user_id: sel.id,
+        });
+        if (error) {
+          console.error("Resume sync: conversation messages", error);
+          return;
+        }
+        const mapped = mapMessageRows(data || []);
+        setMessages(mapped);
+        messagesCacheRef.current.set(sel.id, {
+          messages: mapped,
+          at: Date.now(),
+        });
+      })();
+    };
+
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) syncAfterResume();
+    };
+
+    document.addEventListener("visibilitychange", syncAfterResume);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      document.removeEventListener("visibilitychange", syncAfterResume);
+      window.removeEventListener("pageshow", onPageShow);
+    };
+  }, [user, supabase, mapMessageRows]);
 
   // Fetch broadcast messages when broadcast group is selected
   useEffect(() => {
