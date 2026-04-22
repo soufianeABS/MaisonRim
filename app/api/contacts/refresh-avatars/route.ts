@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { uploadExternalImageToS3 } from "@/lib/r2-storage";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -93,13 +94,25 @@ export async function POST(request: NextRequest) {
       phoneNumber: contactId,
     }).catch(() => null);
 
-    results.push({ contactId, avatar_url: avatar });
-
+    let storedAvatar = avatar;
     if (avatar) {
+      const uploaded = await uploadExternalImageToS3({
+        fileUrl: avatar,
+        keyPrefix: `avatars/${user.id}`,
+        objectId: contactId,
+      }).catch(() => null);
+      if (uploaded) {
+        storedAvatar = uploaded;
+      }
+    }
+
+    results.push({ contactId, avatar_url: storedAvatar });
+
+    if (storedAvatar) {
       // Best-effort update
       await supabase
         .from("contacts")
-        .update({ avatar_url: avatar, updated_at: new Date().toISOString() })
+        .update({ avatar_url: storedAvatar, updated_at: new Date().toISOString() })
         .eq("owner_id", user.id)
         .eq("phone", contactId);
     }

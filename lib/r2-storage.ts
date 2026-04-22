@@ -327,6 +327,84 @@ export async function uploadBufferToS3(
 }
 
 /**
+ * Download an external image URL and persist it in R2.
+ * Returns a presigned URL for the stored object when successful.
+ */
+export async function uploadExternalImageToS3(params: {
+  fileUrl: string;
+  keyPrefix: string;
+  objectId: string;
+}): Promise<string | null> {
+  try {
+    const fileUrl = String(params.fileUrl || "").trim();
+    const keyPrefix = String(params.keyPrefix || "").replace(/^\/+|\/+$/g, "");
+    const objectId = String(params.objectId || "").replace(/[^a-zA-Z0-9_-]/g, "");
+
+    if (!fileUrl || !keyPrefix || !objectId) {
+      throw new Error("Missing required parameters for external image upload");
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+    const response = await fetch(fileUrl, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Failed to download image: ${response.status} ${response.statusText}`);
+    }
+
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+    const mimeType = contentType.split(";")[0] || "image/jpeg";
+    if (!mimeType.startsWith("image/")) {
+      throw new Error(`External URL is not an image: ${mimeType || "unknown"}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    if (!buffer.length) {
+      throw new Error("Downloaded image is empty");
+    }
+
+    const maxBytes = 5 * 1024 * 1024;
+    if (buffer.length > maxBytes) {
+      throw new Error(`Image too large: ${buffer.length} bytes (max ${maxBytes})`);
+    }
+
+    const fileExtension = getFileExtensionFromMimeType(mimeType);
+    const key = `${keyPrefix}/${objectId}.${fileExtension}`;
+
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key,
+        Body: buffer,
+        ContentType: mimeType,
+        Metadata: {
+          "upload-timestamp": new Date().toISOString(),
+          "source-url": fileUrl,
+          "object-id": objectId,
+        },
+      }),
+    );
+
+    const command = new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: key,
+    });
+    return await getSignedUrl(s3Client, command, {
+      expiresIn: getPresignExpiresSeconds(),
+    });
+  } catch (error) {
+    console.error("Error in uploadExternalImageToS3 (R2):", error);
+    return null;
+  }
+}
+
+/**
  * Generate a presigned URL for accessing an object in R2
  */
 export async function generatePresignedUrl(

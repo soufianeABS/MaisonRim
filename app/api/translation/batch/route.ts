@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
   const rawIds = b.message_ids;
   const lang =
     typeof b.target_language === "string" ? b.target_language.trim() : "";
+  const includeAnyExisting = b.include_any_existing === true;
   if (!isAllowedTranslationLanguage(lang)) {
     return NextResponse.json({ error: "Invalid or missing target_language." }, { status: 400 });
   }
@@ -51,12 +52,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ translations: {} as Record<string, string> });
   }
 
-  const { data: rows, error } = await supabase
+  const query = supabase
     .from("message_translations")
-    .select("message_id, translated_text")
+    .select("message_id, translated_text, target_language, updated_at")
     .eq("user_id", user.id)
-    .eq("target_language", lang)
     .in("message_id", message_ids);
+  const { data: rows, error } = includeAnyExisting
+    ? await query.order("updated_at", { ascending: false })
+    : await query.eq("target_language", lang);
 
   if (error) {
     if (isMissingTranslationsTableError(error)) {
@@ -77,6 +80,7 @@ export async function POST(request: NextRequest) {
     const id = (row as { message_id?: string }).message_id;
     const text = (row as { translated_text?: string }).translated_text;
     if (typeof id === "string" && typeof text === "string" && text.length > 0) {
+      if (includeAnyExisting && translations[id]) continue;
       translations[id] = text;
     }
   }

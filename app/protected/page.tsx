@@ -26,6 +26,7 @@ interface ChatUser {
   status_color?: string | null;
   status_rule?: string | null;
   status_rule_mode?: "ai" | "hard" | null;
+  auto_translate_enabled?: boolean | null;
 }
 
 interface Message {
@@ -120,6 +121,7 @@ export default function ChatPage() {
   const [threadLoading, setThreadLoading] = useState(false);
   const supabase = createClient();
   const avatarBackfillAttemptedRef = useState(() => new Set<string>())[0];
+  const avatarBackfillTriggeredRef = useRef(false);
   /** Recent conversation payloads — hover prefetch + instant reopen. */
   const messagesCacheRef = useRef(
     new Map<string, { messages: Message[]; at: number }>(),
@@ -251,34 +253,37 @@ export default function ChatPage() {
           console.warn("[avatars] debug log failed:", e);
         }
 
-        // Green API avatar backfill (best-effort): fetch avatars for missing contacts once.
+        // Green API avatar backfill (best-effort): call once on initial page open only.
         try {
-          const rows = data as Array<{ id?: string; avatar_url?: string | null }>;
-          const missing = rows
-            .map((r) => String(r.id ?? ""))
-            .filter(Boolean)
-            .filter((id) => !avatarBackfillAttemptedRef.has(id))
-            .filter((id) => {
-              const row = rows.find((x) => String(x.id ?? "") === id);
-              return !row?.avatar_url;
-            })
-            .slice(0, 10);
-
-          if (missing.length > 0) {
-            missing.forEach((id) => avatarBackfillAttemptedRef.add(id));
-            console.log("[avatars] attempting Green avatar backfill for:", missing);
-            fetch("/api/contacts/refresh-avatars", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ contactIds: missing }),
-            })
-              .then((r) => r.json().catch(() => null))
-              .then((res) => {
-                console.log("[avatars] backfill result:", res);
-                // refresh users list so avatar_url appears
-                setTimeout(fetchUsers, 1200);
+          if (!avatarBackfillTriggeredRef.current) {
+            avatarBackfillTriggeredRef.current = true;
+            const rows = data as Array<{ id?: string; avatar_url?: string | null }>;
+            const missing = rows
+              .map((r) => String(r.id ?? ""))
+              .filter(Boolean)
+              .filter((id) => !avatarBackfillAttemptedRef.has(id))
+              .filter((id) => {
+                const row = rows.find((x) => String(x.id ?? "") === id);
+                return !row?.avatar_url;
               })
-              .catch((e) => console.warn("[avatars] backfill call failed:", e));
+              .slice(0, 25);
+
+            if (missing.length > 0) {
+              missing.forEach((id) => avatarBackfillAttemptedRef.add(id));
+              console.log("[avatars] attempting Green avatar backfill once for:", missing);
+              fetch("/api/contacts/refresh-avatars", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ contactIds: missing }),
+              })
+                .then((r) => r.json().catch(() => null))
+                .then((res) => {
+                  console.log("[avatars] backfill result:", res);
+                  // refresh users list so avatar_url appears
+                  setTimeout(fetchUsers, 1200);
+                })
+                .catch((e) => console.warn("[avatars] backfill call failed:", e));
+            }
           }
         } catch (e) {
           console.warn("[avatars] backfill scheduling failed:", e);
@@ -304,6 +309,8 @@ export default function ChatPage() {
           status_rule_mode: normalizeStatusRuleMode(
             (user as { status_rule_mode?: unknown }).status_rule_mode,
           ),
+          auto_translate_enabled:
+            (user as { auto_translate_enabled?: unknown }).auto_translate_enabled === true,
         }));
 
         setUsers(transformedUsers);
@@ -749,6 +756,8 @@ export default function ChatPage() {
         status_rule_mode: normalizeStatusRuleMode(
           (user as { status_rule_mode?: unknown }).status_rule_mode,
         ),
+        auto_translate_enabled:
+          (user as { auto_translate_enabled?: unknown }).auto_translate_enabled === true,
       }));
 
       setUsers(transformedUsers);
@@ -908,7 +917,12 @@ export default function ChatPage() {
 
   const handleSendMessage = async (
     content: string,
-    options?: { quotedMessageId?: string },
+    options?: {
+      quotedMessageId?: string;
+      originalMessage?: string;
+      autoTranslatedFrom?: string;
+      autoTranslatedTo?: string;
+    },
   ) => {
     // Check if we're broadcasting to a group or sending to a single user
     if (broadcastGroupId && broadcastGroupName) {
@@ -953,6 +967,13 @@ export default function ChatPage() {
         body: JSON.stringify({
           to: selectedUser.id,
           message: content,
+          ...(options?.originalMessage
+            ? {
+                originalMessage: options.originalMessage,
+                autoTranslatedFrom: options.autoTranslatedFrom ?? null,
+                autoTranslatedTo: options.autoTranslatedTo ?? null,
+              }
+            : {}),
           ...(options?.quotedMessageId
             ? { quotedMessageId: options.quotedMessageId }
             : {}),
@@ -998,7 +1019,19 @@ export default function ChatPage() {
           content,
           timestamp: new Date().toISOString(),
           message_type: 'text',
-          media_data: null
+          media_data: options?.originalMessage
+            ? JSON.stringify({
+                original_text: options.originalMessage,
+                translated_text: content,
+                auto_translated_outgoing: true,
+                ...(options.autoTranslatedFrom
+                  ? { auto_translated_from: options.autoTranslatedFrom }
+                  : {}),
+                ...(options.autoTranslatedTo
+                  ? { auto_translated_to: options.autoTranslatedTo }
+                  : {}),
+              })
+            : null
         };
 
         const { error: dbError } = await supabase

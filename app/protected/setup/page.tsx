@@ -23,7 +23,7 @@ const PROVIDER_COUNTRIES = [
 ] as const;
 
 interface UserSettings {
-  messaging_provider?: 'whatsapp_cloud' | 'green_api';
+  messaging_provider?: 'whatsapp_cloud' | 'green_api' | 'meta_messenger';
   provider_phone_number?: string | null;
   access_token_added: boolean;
   webhook_verified: boolean;
@@ -37,6 +37,9 @@ interface UserSettings {
   phone_number_id?: string | null;
   business_account_id?: string | null;
   verify_token?: string | null;
+  messenger_page_id?: string | null;
+  messenger_page_access_token?: string | null;
+  messenger_app_secret?: string | null;
   green_api_url?: string | null;
   green_media_url?: string | null;
   green_id_instance?: string | null;
@@ -49,7 +52,7 @@ export default function SetupPage() {
   const [loading, setLoading] = useState(true);
   
   // Provider selection
-  const [provider, setProvider] = useState<'whatsapp_cloud' | 'green_api'>('green_api');
+  const [provider, setProvider] = useState<'whatsapp_cloud' | 'green_api' | 'meta_messenger'>('green_api');
   const [providerCountryDialCode, setProviderCountryDialCode] = useState<string>('+33'); // default France
   const [providerNationalNumber, setProviderNationalNumber] = useState<string>('');
   const [savingProviderPhone, setSavingProviderPhone] = useState(false);
@@ -82,6 +85,14 @@ export default function SetupPage() {
   const [savingWebhook, setSavingWebhook] = useState(false);
   const [webhookError, setWebhookError] = useState<string | null>(null);
   const [webhookSuccess, setWebhookSuccess] = useState(false);
+
+  // Meta Messenger form
+  const [messengerPageId, setMessengerPageId] = useState("");
+  const [messengerPageAccessToken, setMessengerPageAccessToken] = useState("");
+  const [messengerAppSecret, setMessengerAppSecret] = useState("");
+  const [savingMessenger, setSavingMessenger] = useState(false);
+  const [messengerError, setMessengerError] = useState<string | null>(null);
+  const [messengerSuccess, setMessengerSuccess] = useState(false);
   
   // Copy states
   const [copiedWebhookUrl, setCopiedWebhookUrl] = useState(false);
@@ -104,7 +115,8 @@ export default function SetupPage() {
 
         const p = (data.settings.messaging_provider || 'green_api') as
           | 'whatsapp_cloud'
-          | 'green_api';
+          | 'green_api'
+          | 'meta_messenger';
         setProvider(p);
         
         // Populate form fields if data exists
@@ -144,6 +156,10 @@ export default function SetupPage() {
         if (data.settings.green_media_url) setGreenMediaUrl(data.settings.green_media_url);
         if (data.settings.green_id_instance) setGreenIdInstance(data.settings.green_id_instance);
         if (data.settings.green_api_token_instance) setGreenApiTokenInstance(data.settings.green_api_token_instance);
+
+        if (data.settings.messenger_page_id) setMessengerPageId(data.settings.messenger_page_id);
+        if (data.settings.messenger_page_access_token) setMessengerPageAccessToken(data.settings.messenger_page_access_token);
+        if (data.settings.messenger_app_secret) setMessengerAppSecret(data.settings.messenger_app_secret);
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -347,6 +363,49 @@ export default function SetupPage() {
       setSavingWebhook(false);
     }
   };
+
+  const handleSaveMessenger = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingMessenger(true);
+    setMessengerError(null);
+    setMessengerSuccess(false);
+
+    try {
+      if (!messengerPageId.trim()) {
+        setMessengerError("Page ID is required");
+        return;
+      }
+      if (!messengerPageAccessToken.trim()) {
+        setMessengerError("Page Access Token is required");
+        return;
+      }
+
+      const response = await fetch('/api/settings/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messaging_provider: 'meta_messenger',
+          messenger_page_id: messengerPageId,
+          messenger_page_access_token: messengerPageAccessToken,
+          messenger_app_secret: messengerAppSecret || null,
+          api_version: apiVersion,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || data.error || 'Failed to save Meta Messenger settings');
+      }
+
+      setMessengerSuccess(true);
+      await loadSettings();
+      setTimeout(() => setMessengerSuccess(false), 3000);
+    } catch (error) {
+      setMessengerError(error instanceof Error ? error.message : 'Failed to save Meta Messenger settings');
+    } finally {
+      setSavingMessenger(false);
+    }
+  };
   
   const copyToClipboard = (text: string, type: 'webhook' | 'verify' | 'access') => {
     navigator.clipboard.writeText(text);
@@ -370,9 +429,15 @@ export default function SetupPage() {
     return visiblePart + maskedPart;
   };
   
-  const webhookUrl = typeof window !== 'undefined' && settings?.webhook_token
-    ? `${window.location.origin}/api/webhook/${settings.webhook_token}`
-    : '';
+  const webhookUrl =
+    typeof window !== 'undefined' && settings?.webhook_token
+      ? `${window.location.origin}/api/webhook/${settings.webhook_token}`
+      : '';
+
+  const metaWebhookUrl =
+    typeof window !== 'undefined' && settings?.webhook_token
+      ? `${window.location.origin}/api/meta/webhook/${settings.webhook_token}`
+      : '';
 
   const greenWebhookUrl =
     typeof window !== 'undefined' && settings?.webhook_token
@@ -385,15 +450,20 @@ export default function SetupPage() {
     settings?.green_api_token_instance
   );
   const whatsappReady = !!(settings?.access_token_added || settings?.webhook_verified);
+  const messengerReady = !!(
+    settings?.messenger_page_id && settings?.messenger_page_access_token
+  );
   const hasCommonPhone = !!settings?.provider_phone_number;
   const activeProvider = settings?.messaging_provider || 'green_api';
   const isSetupComplete =
     activeProvider === 'green_api'
       ? greenReady && hasCommonPhone
-      : whatsappReady && hasCommonPhone;
+      : activeProvider === 'meta_messenger'
+        ? messengerReady
+        : whatsappReady && hasCommonPhone;
 
   const setupIncompleteItems: string[] = [];
-  if (!hasCommonPhone) {
+  if (activeProvider !== 'meta_messenger' && !hasCommonPhone) {
     setupIncompleteItems.push(
       'Business phone number — save it in the Messaging Provider section above.',
     );
@@ -402,6 +472,17 @@ export default function SetupPage() {
     if (!greenReady) {
       setupIncompleteItems.push(
         'Green API — save apiUrl, idInstance, and apiTokenInstance, then “Save Green API Settings”.',
+      );
+    }
+  } else if (activeProvider === 'meta_messenger') {
+    if (!messengerReady) {
+      setupIncompleteItems.push(
+        'Meta Messenger — save Page ID + Page Access Token, then “Save Meta Messenger Settings”.',
+      );
+    }
+    if (!settings?.has_verify_token) {
+      setupIncompleteItems.push(
+        'Webhook verify token — create and save it (required to verify the webhook in Meta).',
       );
     }
   } else {
@@ -469,10 +550,10 @@ export default function SetupPage() {
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
-            WhatsApp Setup
+            Messaging Setup
           </h1>
           <p className="text-muted-foreground text-lg">
-            Configure your WhatsApp Business API credentials to start sending and receiving messages
+            Configure your messaging provider credentials to start sending and receiving messages
           </p>
         </div>
         
@@ -545,7 +626,7 @@ export default function SetupPage() {
             <CardHeader>
               <CardTitle className="text-xl">Messaging Provider</CardTitle>
               <CardDescription>
-                Choose how this account connects to WhatsApp. Your chats will use the selected provider.
+                Choose how this account connects. Your chats will use the selected provider.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -626,6 +707,21 @@ export default function SetupPage() {
                           <div className="font-medium">WhatsApp Cloud API (Meta)</div>
                           <div className="text-sm text-muted-foreground">
                             Uses Meta Graph API + webhook for inbound messages.
+                          </div>
+                        </div>
+                      </label>
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="provider"
+                          className="mt-1"
+                          checked={provider === 'meta_messenger'}
+                          onChange={() => setProvider('meta_messenger')}
+                        />
+                        <div>
+                          <div className="font-medium">Meta Messenger</div>
+                          <div className="text-sm text-muted-foreground">
+                            Uses Meta Graph API (Page) + webhook for inbound messages.
                           </div>
                         </div>
                       </label>
@@ -987,6 +1083,207 @@ export default function SetupPage() {
             </>
           )}
 
+          {provider === 'meta_messenger' && (
+            <>
+              {/* Meta Messenger Configuration */}
+              <Card className="shadow-lg">
+                <CardHeader>
+                  <CardTitle className="text-2xl flex items-center gap-2">
+                    Meta Messenger
+                    {messengerReady && <CheckCircle2 className="h-5 w-5 text-green-600" />}
+                  </CardTitle>
+                  <CardDescription className="mt-2">
+                    Required for sending messages via Messenger Page API
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSaveMessenger} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="messenger-page-id">Page ID *</Label>
+                      <Input
+                        id="messenger-page-id"
+                        type="text"
+                        placeholder="123456789012345"
+                        value={messengerPageId}
+                        onChange={(e) => setMessengerPageId(e.target.value)}
+                        className="font-mono text-sm"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="messenger-page-access-token">Page Access Token *</Label>
+                      <Input
+                        id="messenger-page-access-token"
+                        type="text"
+                        placeholder="EAAB..."
+                        value={messengerPageAccessToken}
+                        onChange={(e) => setMessengerPageAccessToken(e.target.value)}
+                        className="font-mono text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Generate a Page Access Token in Meta Developers for your app + page.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="messenger-app-secret">App Secret (recommended)</Label>
+                      <Input
+                        id="messenger-app-secret"
+                        type="text"
+                        placeholder="App secret (used to validate webhook signature)"
+                        value={messengerAppSecret}
+                        onChange={(e) => setMessengerAppSecret(e.target.value)}
+                        className="font-mono text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        If provided, incoming webhook requests must pass X-Hub-Signature-256 verification.
+                      </p>
+                    </div>
+
+                    {messengerError && (
+                      <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/20 p-3 rounded-lg flex items-start gap-2">
+                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        <span>{messengerError}</span>
+                      </div>
+                    )}
+
+                    {messengerSuccess && (
+                      <div className="text-sm text-green-600 bg-green-50 dark:bg-green-950/20 p-3 rounded-lg flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Meta Messenger settings saved successfully!</span>
+                      </div>
+                    )}
+
+                    <Button type="submit" className="w-full" disabled={savingMessenger}>
+                      {savingMessenger ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        'Save Meta Messenger Settings'
+                      )}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+
+              {/* Meta Webhook Configuration */}
+              <Card className="shadow-lg">
+                <CardHeader>
+                  <CardTitle className="text-2xl flex items-center gap-2">
+                    Webhook Setup
+                    {settings?.webhook_verified && (
+                      <CheckCircle2 className="h-5 w-5 text-green-600" />
+                    )}
+                  </CardTitle>
+                  <CardDescription className="mt-2">
+                    Required for receiving Messenger messages
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSaveWebhook} className="space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Label>Webhook URL</Label>
+                        <Badge variant="secondary" className="text-xs">
+                          Unique to You
+                        </Badge>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          type="text"
+                          value={metaWebhookUrl || 'Loading your unique webhook URL...'}
+                          readOnly
+                          className="font-mono text-sm bg-muted"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => copyToClipboard(metaWebhookUrl, 'webhook')}
+                          disabled={!metaWebhookUrl}
+                        >
+                          {copiedWebhookUrl ? (
+                            <Check className="h-4 w-4 text-green-600" />
+                          ) : (
+                            <Copy className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Copy this URL into Meta Developers → Messenger → Webhooks.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="verify-token">Verify Token *</Label>
+                        {settings?.has_verify_token && (
+                          <Badge variant="secondary" className="text-xs">
+                            Configured
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          id="verify-token"
+                          type="text"
+                          placeholder="Enter a secure verify token"
+                          value={verifyToken}
+                          onChange={(e) => setVerifyToken(e.target.value)}
+                          className="font-mono text-sm"
+                        />
+                        {verifyToken && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => copyToClipboard(verifyToken, 'verify')}
+                          >
+                            {copiedVerifyToken ? (
+                              <Check className="h-4 w-4 text-green-600" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Create a secure token. Use the same value when Meta verifies your webhook.
+                      </p>
+                    </div>
+
+                    {webhookError && (
+                      <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/20 p-3 rounded-lg flex items-start gap-2">
+                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        <span>{webhookError}</span>
+                      </div>
+                    )}
+
+                    {webhookSuccess && (
+                      <div className="text-sm text-green-600 bg-green-50 dark:bg-green-950/20 p-3 rounded-lg flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Webhook configuration saved! Now verify it in Meta Developers</span>
+                      </div>
+                    )}
+
+                    <Button type="submit" className="w-full" disabled={savingWebhook}>
+                      {savingWebhook ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        'Save Webhook Configuration'
+                      )}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+            </>
+          )}
+
           {provider === 'green_api' && (
             <>
               {/* Green API Configuration */}
@@ -1194,6 +1491,24 @@ export default function SetupPage() {
                 </p>
                 <p className="pt-2 border-t border-border">
                   <strong>Note:</strong> Your unique webhook URL is automatically generated when you first visit this page. Use this URL in your Meta Business Suite webhook configuration.
+                </p>
+              </>
+            ) : provider === 'meta_messenger' ? (
+              <>
+                <p>
+                  • <strong>Page ID:</strong> Your Facebook Page ID used for the Messenger API
+                </p>
+                <p>
+                  • <strong>Page Access Token:</strong> Token with permissions to send messages as the page
+                </p>
+                <p>
+                  • <strong>App Secret:</strong> (Recommended) Enables signature verification for webhooks
+                </p>
+                <p>
+                  • <strong>Webhook URL:</strong> Use the unique Meta webhook URL shown above
+                </p>
+                <p>
+                  • <strong>Verify Token:</strong> Must match the verify token you configure in Meta
                 </p>
               </>
             ) : (

@@ -3,6 +3,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2, Reply, Smile, Check, Languages } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -65,6 +66,7 @@ interface ChatUser {
   status_rule?: string | null;
   /** From contact_conversations.status_rule_mode — enables Suggest reply without messages when "hard". */
   status_rule_mode?: "ai" | "hard" | null;
+  auto_translate_enabled?: boolean | null;
 }
 
 interface Message {
@@ -207,8 +209,13 @@ interface ChatWindowProps {
   /** Optional reply — `quotedMessageId` is the WhatsApp / Green message id to quote. */
   onSendMessage: (
     content: string,
-    options?: { quotedMessageId?: string },
-  ) => void;
+    options?: {
+      quotedMessageId?: string;
+      originalMessage?: string;
+      autoTranslatedFrom?: string;
+      autoTranslatedTo?: string;
+    },
+  ) => void | Promise<void>;
   /** When set, show Reply / React on messages (1:1 only; hidden for broadcast). */
   messagingProvider?: "whatsapp_cloud" | "green_api" | null;
   /** Send emoji reaction to an existing message (provider-specific API). */
@@ -385,6 +392,8 @@ export function ChatWindow({
   const refreshingUrlsRef = useRef<Set<string>>(new Set());
   const refreshedOnceRef = useRef<Set<string>>(new Set());
   const lastRefreshAtRef = useRef<Record<string, number>>({});
+  const [failedMediaPreviews, setFailedMediaPreviews] = useState<Set<string>>(new Set());
+  const failedMediaPreviewsRef = useRef<Set<string>>(new Set());
   const [loadingMedia, setLoadingMedia] = useState<Set<string>>(new Set());
   const [mediaUrlOverrides, setMediaUrlOverrides] = useState<Record<string, string>>({});
   const [runningAction, setRunningAction] = useState(false);
@@ -412,6 +421,11 @@ export function ChatWindow({
     {},
   );
   const [translationLoadingId, setTranslationLoadingId] = useState<string | null>(null);
+  const [showOriginalForMessage, setShowOriginalForMessage] = useState<Set<string>>(new Set());
+  const [conversationAutoTranslate, setConversationAutoTranslate] = useState(false);
+  const [savingConversationAutoTranslate, setSavingConversationAutoTranslate] = useState(false);
+  const autoTranslateInFlightRef = useRef<Set<string>>(new Set());
+  const autoTranslatedOnceRef = useRef<Set<string>>(new Set());
 
   const [devComposeOpen, setDevComposeOpen] = useState(false);
   const [devComposeKind, setDevComposeKind] = useState<"in" | "out" | "both" | null>(
@@ -556,7 +570,7 @@ export function ChatWindow({
   }, [loadTranslationPrefs]);
 
   useEffect(() => {
-    if (translationUiEnabled !== true) {
+    if (translationUiEnabled !== true && !conversationAutoTranslate) {
       setTranslationByMessageId({});
       return;
     }
@@ -582,6 +596,7 @@ export function ChatWindow({
           body: JSON.stringify({
             message_ids: ids,
             target_language: translationTargetLang,
+            include_any_existing: true,
           }),
         });
         const data = await readResponseJson<{ translations?: Record<string, string> }>(res);
@@ -596,7 +611,124 @@ export function ChatWindow({
     return () => {
       cancelled = true;
     };
-  }, [messages, translationTargetLang, translationUiEnabled]);
+  }, [messages, translationTargetLang, translationUiEnabled, conversationAutoTranslate]);
+
+  useEffect(() => {
+    if (!selectedUser || broadcastGroupName) {
+      setConversationAutoTranslate(false);
+      return;
+    }
+    setConversationAutoTranslate(selectedUser.auto_translate_enabled === true);
+  }, [selectedUser?.id, selectedUser?.auto_translate_enabled, broadcastGroupName]);
+
+  const updateConversationAutoTranslate = useCallback(
+    async (enabled: boolean) => {
+      if (!selectedUser || broadcastGroupName || savingConversationAutoTranslate) return;
+      const prev = conversationAutoTranslate;
+      setConversationAutoTranslate(enabled);
+      setSavingConversationAutoTranslate(true);
+      try {
+        const res = await fetch("/api/conversations/auto-translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contactId: selectedUser.id, enabled }),
+        });
+        const data = await readResponseJson<{ error?: string }>(res);
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to update auto-translate setting");
+        }
+      } catch (e) {
+        setConversationAutoTranslate(prev);
+        alert(e instanceof Error ? e.message : "Failed to update auto-translate setting");
+      } finally {
+        setSavingConversationAutoTranslate(false);
+      }
+    },
+    [selectedUser, broadcastGroupName, conversationAutoTranslate, savingConversationAutoTranslate],
+  );
+
+  useEffect(() => {
+    if (
+      !selectedUser ||
+      broadcastGroupName ||
+      !conversationAutoTranslate ||
+      !translationTargetLang
+    ) {
+      return;
+    }
+    const inbound = messages.filter((m) => !m.is_sent_by_me && !m.id.startsWith("optimistic_"));
+    const candidates = inbound.filter((m) => {
+      if (translationByMessageId[m.id]) return false;
+      if (autoTranslateInFlightRef.current.has(m.id)) return false;
+      if (autoTranslatedOnceRef.current.has(m.id)) return false;
+      const md = parseMessageMediaJson(m);
+      return Boolean(getTranslatableText(m, md));
+    });
+    if (candidates.length === 0) return;
+    const run = async () => {
+      const initialBatch = candidates
+        .map((m) => ({ id: m.id, text: getTranslatableText(m, parseMessageMediaJson(m)) || "" }))
+        .filter((x) => x.text)
+        .slice(0, 60);
+      if (initialBatch.length === 0) return;
+      let batch = initialBatch;
+      try {
+        const existingRes = await fetch("/api/translation/batch", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message_ids: initialBatch.map((x) => x.id),
+            target_language: translationTargetLang,
+            include_any_existing: true,
+          }),
+        });
+        const existingData = await readResponseJson<{ translations?: Record<string, string> }>(
+          existingRes,
+        );
+        if (existingRes.ok && existingData.translations) {
+          setTranslationByMessageId((prev) => ({ ...prev, ...existingData.translations }));
+          const already = new Set(Object.keys(existingData.translations));
+          batch = initialBatch.filter((x) => !already.has(x.id));
+        }
+      } catch {
+        // Ignore cache-check failures and continue with batch generation.
+      }
+      if (batch.length === 0) return;
+      for (const item of batch) autoTranslateInFlightRef.current.add(item.id);
+      try {
+        const res = await fetch("/api/translation/bulk-generate", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            target_language: translationTargetLang,
+            messages: batch,
+          }),
+        });
+        const data = await readResponseJson<{ translations?: Record<string, string> }>(res);
+        if (res.ok && data.translations && typeof data.translations === "object") {
+          setTranslationByMessageId((prev) => ({ ...prev, ...data.translations }));
+        }
+      } catch {
+        // Keep chat flow smooth; user can still translate manually.
+      } finally {
+        for (const item of batch) {
+          autoTranslateInFlightRef.current.delete(item.id);
+          autoTranslatedOnceRef.current.add(item.id);
+        }
+      }
+    };
+    void run();
+  }, [
+    selectedUser?.id,
+    broadcastGroupName,
+    conversationAutoTranslate,
+    translationUiEnabled,
+    translationTargetLang,
+    messages,
+    translationByMessageId,
+  ]);
 
   // Load available ApiActions (Tag -> API mappings) once, so we can disable
   // the "Run action" button when no mapping exists for the tag.
@@ -1049,7 +1181,7 @@ export function ChatWindow({
     adjustMessageInputHeight();
   }, [messageInput, adjustMessageInputHeight]);
 
-  const commitSend = useCallback(() => {
+  const commitSend = useCallback(async () => {
     if (
       !messageInput.trim() ||
       (!selectedUser && !broadcastGroupName) ||
@@ -1058,7 +1190,65 @@ export function ChatWindow({
     ) {
       return;
     }
-    onSendMessage(messageInput.trim(), replyingTo ? { quotedMessageId: replyingTo.id } : undefined);
+    const rawMessage = messageInput.trim();
+    let finalMessage = rawMessage;
+    let autoTranslatedFrom: string | undefined;
+    let autoTranslatedTo: string | undefined;
+    if (
+      selectedUser &&
+      !broadcastGroupName &&
+      conversationAutoTranslate
+    ) {
+      try {
+        const recentSamples = [...messages]
+          .reverse()
+          .filter((m) => !m.id.startsWith("optimistic_"))
+          .map((m) => getTranslatableText(m, parseMessageMediaJson(m)))
+          .filter((t): t is string => Boolean(t && t.trim().length > 0))
+          .slice(0, 4);
+        if (recentSamples.length > 0) {
+          const detectRes = await fetch("/api/translation/detect", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ samples: recentSamples }),
+          });
+          const detectData = await readResponseJson<{ language?: string }>(detectRes);
+          const targetLang = detectRes.ok ? detectData.language?.trim() : "";
+          if (targetLang && targetLang !== "und") {
+            const translateRes = await fetch("/api/translation/instant", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                text: rawMessage,
+                target_language: targetLang,
+              }),
+            });
+            const trData = await readResponseJson<{ translated_text?: string }>(translateRes);
+            const translated = translateRes.ok ? trData.translated_text?.trim() : "";
+            if (translated) {
+              finalMessage = translated;
+              autoTranslatedFrom = "auto";
+              autoTranslatedTo = targetLang;
+            }
+          }
+        }
+      } catch {
+        // If auto-translation fails, send original text.
+      }
+    }
+
+    await onSendMessage(finalMessage, {
+      ...(replyingTo ? { quotedMessageId: replyingTo.id } : {}),
+      ...(finalMessage !== rawMessage
+        ? {
+            originalMessage: rawMessage,
+            autoTranslatedFrom,
+            autoTranslatedTo,
+          }
+        : {}),
+    });
     setReplyingTo(null);
     setMessageInput("");
     requestAnimationFrame(() => {
@@ -1074,11 +1264,13 @@ export function ChatWindow({
     onSendMessage,
     replyingTo,
     adjustMessageInputHeight,
+    messages,
+    conversationAutoTranslate,
   ]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    commitSend();
+    void commitSend();
   };
 
   const replyPreviewSnippet = (m: Message) => {
@@ -1626,10 +1818,24 @@ export function ChatWindow({
         console.log('Media URL refreshed:', result);
         if (result?.newUrl && typeof result.newUrl === "string") {
           setMediaUrlOverrides((prev) => ({ ...prev, [messageId]: result.newUrl }));
+          failedMediaPreviewsRef.current.delete(messageId);
+          setFailedMediaPreviews((prev) => {
+            if (!prev.has(messageId)) return prev;
+            const next = new Set(prev);
+            next.delete(messageId);
+            return next;
+          });
         }
       } else {
         const txt = await response.text();
         console.error('Failed to refresh media URL:', txt);
+        if (
+          txt.includes('"Media data incomplete"') ||
+          txt.includes('"Missing required parameter: messageId"')
+        ) {
+          // Don't retry known non-recoverable payloads (legacy/incomplete media_data).
+          refreshedOnceRef.current.add(messageId);
+        }
       }
     } catch (error) {
       console.error('Error refreshing media URL:', error);
@@ -1656,9 +1862,47 @@ export function ChatWindow({
     setLoadingMedia(prev => new Set(prev).add(messageId));
   };
 
+  const canRefreshMediaUrl = (mediaData: MediaData | null): boolean => {
+    return Boolean(mediaData?.id && mediaData?.mime_type);
+  };
+
+  const handleMediaError = (
+    messageId: string,
+    mediaType: "image" | "video",
+    canRefresh: boolean,
+  ) => {
+    if (failedMediaPreviewsRef.current.has(messageId)) return;
+    failedMediaPreviewsRef.current.add(messageId);
+    setFailedMediaPreviews((prev) => new Set(prev).add(messageId));
+    if (canRefresh) {
+      console.warn(`${mediaType} preview failed to load, attempting URL refresh once`, { messageId });
+    } else {
+      console.warn(`${mediaType} preview failed to load and cannot be refreshed (missing media id/mime_type)`, { messageId });
+    }
+    handleMediaLoad(messageId);
+    if (canRefresh) {
+      refreshMediaUrl(messageId);
+    }
+  };
+
+  const retryMediaPreview = (messageId: string, canRefresh: boolean) => {
+    failedMediaPreviewsRef.current.delete(messageId);
+    setFailedMediaPreviews((prev) => {
+      if (!prev.has(messageId)) return prev;
+      const next = new Set(prev);
+      next.delete(messageId);
+      return next;
+    });
+    if (!canRefresh) return;
+    refreshedOnceRef.current.delete(messageId);
+    lastRefreshAtRef.current[messageId] = 0;
+    refreshMediaUrl(messageId);
+  };
+
   const handleTranslateMessage = useCallback(
     async (message: Message) => {
       if (translationUiEnabled !== true) return;
+      if (translationByMessageId[message.id]) return;
       const md = parseMessageMediaJson(message);
       const text = getTranslatableText(message, md);
       if (!text || !translationTargetLang) return;
@@ -1690,22 +1934,82 @@ export function ChatWindow({
         setTranslationLoadingId(null);
       }
     },
-    [translationTargetLang, translationUiEnabled],
+    [translationTargetLang, translationUiEnabled, translationByMessageId],
   );
 
-  const renderTranslationLine = (message: Message, isOwn: boolean) => {
-    const line = translationByMessageId[message.id];
-    if (!line) return null;
+  const getOriginalAndTranslatedText = (message: Message): {
+    original: string | null;
+    translated: string | null;
+  } => {
+    let mediaObj: Record<string, unknown> | null = null;
+    if (message.media_data) {
+      try {
+        mediaObj =
+          typeof message.media_data === "string"
+            ? (JSON.parse(message.media_data) as Record<string, unknown>)
+            : (message.media_data as unknown as Record<string, unknown>);
+      } catch {
+        mediaObj = null;
+      }
+    }
+    const storedOriginal =
+      typeof mediaObj?.original_text === "string" ? mediaObj.original_text.trim() : "";
+    const storedTranslated =
+      typeof mediaObj?.translated_text === "string" ? mediaObj.translated_text.trim() : "";
+    const inlineTranslated = translationByMessageId[message.id]?.trim() || "";
+    return {
+      original: storedOriginal || (message.content?.trim() || null),
+      translated: storedTranslated || inlineTranslated || null,
+    };
+  };
+
+  const resolveMessageDisplayText = (message: Message): {
+    text: string;
+    canToggleOriginal: boolean;
+    showingOriginal: boolean;
+  } => {
+    const { original, translated } = getOriginalAndTranslatedText(message);
+    const canUseTranslated =
+      translationUiEnabled === true &&
+      typeof translated === "string" &&
+      translated.length > 0 &&
+      typeof original === "string" &&
+      original.length > 0 &&
+      translated !== original;
+    const showingOriginal = showOriginalForMessage.has(message.id);
+    if (canUseTranslated && !showingOriginal) {
+      return { text: translated as string, canToggleOriginal: true, showingOriginal: false };
+    }
+    return {
+      text: (original || message.content || "").trim(),
+      canToggleOriginal: canUseTranslated,
+      showingOriginal,
+    };
+  };
+
+  const renderOriginalToggle = (message: Message) => {
+    const resolved = resolveMessageDisplayText(message);
+    if (!resolved.canToggleOriginal) return null;
     return (
-      <p
-        className={`mt-2 border-t pt-2 text-sm ${MESSAGE_BODY_TEXT_CLASS} ${
-          isOwn
-            ? "border-chat-bubble-sent-fg/30 text-chat-bubble-sent-fg/95"
-            : "border-border text-muted-foreground"
-        }`}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 text-[11px] text-muted-foreground"
+        onClick={() =>
+          setShowOriginalForMessage((prev) => {
+            const next = new Set(prev);
+            if (next.has(message.id)) {
+              next.delete(message.id);
+            } else {
+              next.add(message.id);
+            }
+            return next;
+          })
+        }
       >
-        {line}
-      </p>
+        {resolved.showingOriginal ? "Voir traduit" : "Voir original"}
+      </Button>
     );
   };
 
@@ -1762,6 +2066,8 @@ export function ChatWindow({
 
     const isRefreshing = refreshingUrls.has(message.id);
     const isMediaLoading = loadingMedia.has(message.id);
+    const hasFailedPreview = failedMediaPreviews.has(message.id);
+    const canRefreshMedia = canRefreshMediaUrl(mediaData);
     const effectiveMediaUrl =
       mediaUrlOverrides[message.id] || mediaData?.media_url || undefined;
     const isPresignedR2Url =
@@ -1769,13 +2075,15 @@ export function ChatWindow({
       (effectiveMediaUrl.includes("X-Amz-Signature=") ||
         effectiveMediaUrl.includes("X-Amz-Credential=") ||
         effectiveMediaUrl.includes("X-Amz-Date="));
+    const resolvedText = resolveMessageDisplayText(message);
+    const messageText = resolvedText.text || message.content;
 
     switch (messageType) {
       case 'image':
         return (
           <div className={baseClasses}>
             {renderQuoteStripe(message, isOwn)}
-            {effectiveMediaUrl && mediaData?.s3_uploaded ? (
+            {effectiveMediaUrl && mediaData?.s3_uploaded && !hasFailedPreview ? (
               <div className="mb-2 relative overflow-hidden rounded-xl">
                 {isMediaLoading && (
                   <div className="absolute inset-0 bg-gray-200 dark:bg-gray-700 flex items-center justify-center rounded-xl">
@@ -1828,11 +2136,7 @@ export function ChatWindow({
                   }
                   onLoadingComplete={() => handleMediaLoad(message.id)}
                   onLoadStart={() => handleMediaLoadStart(message.id)}
-                  onError={() => {
-                    console.log('Next.js Image failed to load, attempting to refresh URL');
-                    handleMediaLoad(message.id);
-                    refreshMediaUrl(message.id);
-                  }}
+                  onError={() => handleMediaError(message.id, "image", canRefreshMedia)}
                   priority={false}
                   placeholder="blur"
                   blurDataURL="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAhEAACAQMDBQAAAAAAAAAAAAABAgMABAUGIWGRkqGx0f/EABUBAQEAAAAAAAAAAAAAAAAAAAMF/8QAGhEAAgIDAAAAAAAAAAAAAAAAAAECEgMRkf/aAAwDAQACEQMRAD8AltJagyeH0AthI5xdrLcNM91BF5pX2HaH9bcfaSXWGaRmknyJckliyjqTzSlT54b6bk+h0R+Rq19G9D/Z"
@@ -1850,14 +2154,16 @@ export function ChatWindow({
                 <ImageIcon className="h-8 w-8 text-gray-500" />
                 <div className="flex-1">
                   <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Image</p>
-                  <p className="text-xs text-gray-500">Loading...</p>
+                  <p className="text-xs text-gray-500">
+                    {hasFailedPreview ? "Preview failed to load" : "Loading..."}
+                  </p>
                 </div>
-                {mediaData?.s3_uploaded === false && (
+                {(mediaData?.s3_uploaded === false || hasFailedPreview) && (
                   <Button
                     size="sm"
                     variant="ghost"
                     className="p-2 h-8 w-8"
-                    onClick={() => refreshMediaUrl(message.id)}
+                    onClick={() => retryMediaPreview(message.id, canRefreshMedia)}
                     disabled={isRefreshing}
                   >
                     {isRefreshing ? (
@@ -1874,7 +2180,7 @@ export function ChatWindow({
                 {mediaData.caption}
               </p>
             )}
-            {renderTranslationLine(message, isOwn)}
+            {renderOriginalToggle(message)}
             <div
               className={`text-xs mt-0.5 flex w-full ${isOwn ? "justify-end" : "justify-start"}`}
             >
@@ -1928,8 +2234,11 @@ export function ChatWindow({
                   size="sm"
                   variant="ghost"
                   className={`h-10 w-10 p-2 ${isOwn ? "hover:bg-black/20" : "hover:bg-gray-200"}`}
-                  onClick={() => refreshMediaUrl(message.id)}
-                  disabled={isRefreshing}
+                  onClick={() => {
+                    if (!canRefreshMedia) return;
+                    refreshMediaUrl(message.id);
+                  }}
+                  disabled={isRefreshing || !canRefreshMedia}
                 >
                   <RefreshCw className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
                 </Button>
@@ -1979,8 +2288,11 @@ export function ChatWindow({
                       size="sm"
                       variant="ghost"
                       className="p-1 h-6 w-6 ml-auto"
-                      onClick={() => refreshMediaUrl(message.id)}
-                      disabled={isRefreshing}
+                      onClick={() => {
+                        if (!canRefreshMedia) return;
+                        refreshMediaUrl(message.id);
+                      }}
+                      disabled={isRefreshing || !canRefreshMedia}
                     >
                       <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
                     </Button>
@@ -2024,7 +2336,7 @@ export function ChatWindow({
         return (
           <div className={baseClasses}>
             {renderQuoteStripe(message, isOwn)}
-            {effectiveMediaUrl && mediaData?.s3_uploaded ? (
+            {effectiveMediaUrl && mediaData?.s3_uploaded && !hasFailedPreview ? (
               <div className="mb-2 relative overflow-hidden rounded-xl max-w-[400px] max-h-[300px]">
                 {isMediaLoading && (
                   <div className="absolute inset-0 bg-gray-200 dark:bg-gray-700 flex items-center justify-center rounded-xl z-10">
@@ -2040,11 +2352,7 @@ export function ChatWindow({
                   preload="metadata"
                   onLoadStart={() => handleMediaLoadStart(message.id)}
                   onCanPlay={() => handleMediaLoad(message.id)}
-                  onError={() => {
-                    console.log('Video failed to load, attempting to refresh URL');
-                    handleMediaLoad(message.id);
-                    refreshMediaUrl(message.id);
-                  }}
+                  onError={() => handleMediaError(message.id, "video", canRefreshMedia)}
                 >
                   <source src={effectiveMediaUrl} type={mediaData?.mime_type} />
                   Your browser does not support the video tag.
@@ -2060,14 +2368,16 @@ export function ChatWindow({
                 <Play className="h-8 w-8 text-gray-500" />
                 <div className="flex-1">
                   <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Video</p>
-                  <p className="text-xs text-gray-500">Loading...</p>
+                  <p className="text-xs text-gray-500">
+                    {hasFailedPreview ? "Preview failed to load" : "Loading..."}
+                  </p>
                 </div>
-                {(!mediaData?.media_url || !mediaData.s3_uploaded) && (
+                {(!mediaData?.media_url || !mediaData.s3_uploaded || hasFailedPreview) && (
                   <Button
                     size="sm"
                     variant="ghost"
                     className="p-2 h-8 w-8"
-                    onClick={() => refreshMediaUrl(message.id)}
+                    onClick={() => retryMediaPreview(message.id, canRefreshMedia)}
                     disabled={isRefreshing}
                   >
                     {isRefreshing ? (
@@ -2084,7 +2394,7 @@ export function ChatWindow({
                 {mediaData.caption}
               </p>
             )}
-            {renderTranslationLine(message, isOwn)}
+            {renderOriginalToggle(message)}
             <div
               className={`text-xs mt-1 flex w-full ${isOwn ? "justify-end" : "justify-start"}`}
             >
@@ -2149,7 +2459,9 @@ export function ChatWindow({
               {mediaData?.body && (
                 <div>
                   <p className={`text-sm ${MESSAGE_BODY_TEXT_CLASS}`}>
-                    {mediaData.body.text || message.content}
+                    {resolvedText.showingOriginal
+                      ? messageText
+                      : mediaData.body.text || messageText}
                   </p>
                 </div>
               )}
@@ -2157,7 +2469,7 @@ export function ChatWindow({
               {/* If no structured data, show the processed content */}
               {!mediaData?.body && !mediaData?.header && (
                 <p className={`text-sm ${MESSAGE_BODY_TEXT_CLASS}`}>
-                  {message.content}
+                  {messageText}
                 </p>
               )}
 
@@ -2238,7 +2550,7 @@ export function ChatWindow({
               )}
             </div>
 
-            {renderTranslationLine(message, isOwn)}
+            {renderOriginalToggle(message)}
 
             {/* Timestamp */}
             <div
@@ -2257,9 +2569,9 @@ export function ChatWindow({
           <div className={`${baseClasses} ${isOptimistic ? 'opacity-70' : ''} transition-opacity duration-300`}>
             {renderQuoteStripe(message, isOwn)}
             <p className={`text-sm ${MESSAGE_BODY_TEXT_CLASS}`}>
-              {message.content}
+              {messageText}
             </p>
-            {renderTranslationLine(message, isOwn)}
+            {renderOriginalToggle(message)}
             <div
               className={`flex items-center gap-2 mt-2 flex-wrap ${isOwn ? "justify-end" : "justify-start"}`}
             >
@@ -2533,6 +2845,27 @@ export function ChatWindow({
                 const disabled = runningAction || !hasTag || (statusId ? !hasMapping : true);
 
                 return (
+              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1">
+                <Checkbox
+                  id="conversation-auto-translate"
+                  checked={conversationAutoTranslate}
+                  onCheckedChange={(checked) =>
+                    void updateConversationAutoTranslate(Boolean(checked))
+                  }
+                  disabled={savingConversationAutoTranslate}
+                />
+                <Label
+                  htmlFor="conversation-auto-translate"
+                  className="cursor-pointer text-xs text-muted-foreground"
+                  title="Auto-translate incoming and outgoing messages for this conversation"
+                >
+                  Auto translate
+                </Label>
+                {savingConversationAutoTranslate ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                ) : null}
+              </div>
               <Button
                 type="button"
                 variant="outline"
@@ -2557,6 +2890,7 @@ export function ChatWindow({
                   "Run action"
                 )}
               </Button>
+              </div>
                 );
               })()
             )}

@@ -40,6 +40,9 @@ export async function POST(request: NextRequest) {
       business_account_id,
       api_version,
       verify_token,
+      messenger_page_id,
+      messenger_page_access_token,
+      messenger_app_secret,
       green_api_url,
       green_media_url,
       green_id_instance,
@@ -55,6 +58,9 @@ export async function POST(request: NextRequest) {
       !business_account_id &&
       !api_version &&
       !verify_token &&
+      messenger_page_id === undefined &&
+      messenger_page_access_token === undefined &&
+      messenger_app_secret === undefined &&
       green_api_url === undefined &&
       green_media_url === undefined &&
       green_id_instance === undefined &&
@@ -79,6 +85,9 @@ export async function POST(request: NextRequest) {
       api_version?: string;
       webhook_verified?: boolean;
       webhook_token?: string;
+      messenger_page_id?: string | null;
+      messenger_page_access_token?: string | null;
+      messenger_app_secret?: string | null;
       green_api_url?: string | null;
       green_media_url?: string | null;
       green_id_instance?: string | null;
@@ -90,9 +99,14 @@ export async function POST(request: NextRequest) {
     if (messaging_provider !== undefined) {
       const provider =
         typeof messaging_provider === 'string' ? messaging_provider.trim() : '';
-      if (provider && provider !== 'whatsapp_cloud' && provider !== 'green_api') {
+      if (
+        provider &&
+        provider !== 'whatsapp_cloud' &&
+        provider !== 'green_api' &&
+        provider !== 'meta_messenger'
+      ) {
         return NextResponse.json(
-          { error: 'Invalid messaging_provider. Use whatsapp_cloud or green_api.' },
+          { error: 'Invalid messaging_provider. Use whatsapp_cloud, green_api, or meta_messenger.' },
           { status: 400 },
         );
       }
@@ -128,6 +142,26 @@ export async function POST(request: NextRequest) {
 
     if (verify_token !== undefined) {
       updateData.verify_token = verify_token;
+    }
+
+    if (messenger_page_id !== undefined) {
+      const trimmed =
+        typeof messenger_page_id === 'string' ? messenger_page_id.trim() : '';
+      updateData.messenger_page_id = trimmed || null;
+    }
+
+    if (messenger_page_access_token !== undefined) {
+      const trimmed =
+        typeof messenger_page_access_token === 'string'
+          ? messenger_page_access_token.trim()
+          : '';
+      updateData.messenger_page_access_token = trimmed || null;
+    }
+
+    if (messenger_app_secret !== undefined) {
+      const trimmed =
+        typeof messenger_app_secret === 'string' ? messenger_app_secret.trim() : '';
+      updateData.messenger_app_secret = trimmed || null;
     }
 
     if (green_api_url !== undefined) {
@@ -274,6 +308,13 @@ export async function POST(request: NextRequest) {
         phone_number_id: settings.phone_number_id,
         business_account_id: settings.business_account_id,
         verify_token: settings.verify_token,
+        messenger_page_id: (settings as { messenger_page_id?: string | null })
+          .messenger_page_id,
+        messenger_page_access_token: (settings as {
+          messenger_page_access_token?: string | null;
+        }).messenger_page_access_token,
+        messenger_app_secret: (settings as { messenger_app_secret?: string | null })
+          .messenger_app_secret,
         green_api_url: (settings as { green_api_url?: string | null }).green_api_url,
         green_media_url: (settings as { green_media_url?: string | null })
           .green_media_url,
@@ -387,6 +428,13 @@ export async function GET() {
             phone_number_id: updatedSettings.phone_number_id,
             business_account_id: updatedSettings.business_account_id,
             verify_token: updatedSettings.verify_token,
+            messenger_page_id: (updatedSettings as { messenger_page_id?: string | null })
+              .messenger_page_id,
+            messenger_page_access_token: (updatedSettings as {
+              messenger_page_access_token?: string | null;
+            }).messenger_page_access_token,
+            messenger_app_secret: (updatedSettings as { messenger_app_secret?: string | null })
+              .messenger_app_secret,
             green_api_url: (updatedSettings as { green_api_url?: string | null })
               .green_api_url,
             green_media_url: (updatedSettings as { green_media_url?: string | null })

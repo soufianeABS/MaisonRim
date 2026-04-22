@@ -24,7 +24,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse request body
-    const { to, message, quotedMessageId } = await request.json();
+    const {
+      to,
+      message,
+      quotedMessageId,
+      originalMessage,
+      autoTranslatedFrom,
+      autoTranslatedTo,
+    } = await request.json();
 
     // Validate required parameters
     if (!to || !message) {
@@ -35,27 +42,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Clean and validate phone number format for WhatsApp API
-    // WhatsApp expects phone numbers without + prefix, with country code
-    const cleanPhoneNumber = to.replace(/\s+/g, '').replace(/[^\d]/g, ''); // Remove all non-digits including +
-    
-    // Validate phone number format (10-15 digits without + prefix)
-    const phoneRegex = /^\d{10,15}$/;
-    if (!phoneRegex.test(cleanPhoneNumber)) {
-      return NextResponse.json(
-        { 
-          error: 'Invalid phone number format', 
-          message: 'Phone number must contain 10-15 digits (e.g., 918097296453)' 
-        },
-        { status: 400 }
-      );
-    }
+    const digitsTo = String(to).replace(/\s+/g, '').replace(/[^\d]/g, '');
 
     // Get user's messaging provider + credentials
     const { data: settings, error: settingsError } = await supabase
       .from('user_settings')
       .select(
-        'messaging_provider, access_token, phone_number_id, api_version, access_token_added, green_api_url, green_media_url, green_id_instance, green_api_token_instance',
+        'messaging_provider, access_token, phone_number_id, api_version, access_token_added, green_api_url, green_media_url, green_id_instance, green_api_token_instance, messenger_page_id, messenger_page_access_token',
       )
       .eq('id', user.id)
       .single();
@@ -75,7 +68,67 @@ export async function POST(request: NextRequest) {
     let providerMessageId: string | null = null;
     let providerRawResponse: unknown = null;
 
-    if (provider === 'green_api') {
+    if (provider === 'meta_messenger') {
+      const pageId = (settings as { messenger_page_id?: string | null }).messenger_page_id;
+      const pageToken = (settings as { messenger_page_access_token?: string | null })
+        .messenger_page_access_token;
+      const apiVersion = settings.api_version || 'v23.0';
+
+      if (!pageId || !pageToken) {
+        return NextResponse.json(
+          { error: 'Meta Messenger credentials not configured. Please complete setup.' },
+          { status: 400 },
+        );
+      }
+
+      const recipientId = String(to).trim();
+      if (!recipientId) {
+        return NextResponse.json(
+          { error: 'Missing required parameters: to, message' },
+          { status: 400 },
+        );
+      }
+
+      const messengerApiUrl = `https://graph.facebook.com/${apiVersion}/${pageId}/messages`;
+      const payload: Record<string, unknown> = {
+        messaging_type: 'RESPONSE',
+        recipient: { id: recipientId },
+        message: { text: message },
+      };
+
+      console.log('Sending message via Meta Messenger:', {
+        to: recipientId,
+        userId: user.id,
+      });
+
+      const resp = await fetch(messengerApiUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${pageToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await resp.json().catch(async () => {
+        const txt = await resp.text().catch(() => '');
+        return { raw: txt };
+      });
+
+      providerRawResponse = data;
+
+      if (!resp.ok) {
+        return NextResponse.json(
+          { error: 'Failed to send message via Meta Messenger', details: data },
+          { status: resp.status },
+        );
+      }
+
+      providerMessageId =
+        typeof (data as { message_id?: unknown }).message_id === 'string'
+          ? (data as { message_id: string }).message_id
+          : null;
+    } else if (provider === 'green_api') {
       const greenApiUrl = (settings as { green_api_url?: string | null }).green_api_url;
       const idInstance = (settings as { green_id_instance?: string | null }).green_id_instance;
       const apiTokenInstance = (settings as { green_api_token_instance?: string | null })
@@ -89,7 +142,17 @@ export async function POST(request: NextRequest) {
       }
 
       const endpoint = `${greenApiUrl.replace(/\/+$/, '')}/waInstance${idInstance}/sendMessage/${apiTokenInstance}`;
-      const chatId = `${cleanPhoneNumber}@c.us`;
+      const phoneRegex = /^\d{6,20}$/;
+      if (!phoneRegex.test(digitsTo)) {
+        return NextResponse.json(
+          {
+            error: 'Invalid phone number format',
+            message: 'Phone number must contain digits only (6-20 digits)',
+          },
+          { status: 400 },
+        );
+      }
+      const chatId = `${digitsTo}@c.us`;
 
       const greenPayload: {
         chatId: string;
@@ -143,6 +206,20 @@ export async function POST(request: NextRequest) {
           ? (greenData as { idMessage: string }).idMessage
           : null;
     } else {
+      // Clean and validate phone number format for WhatsApp API
+      // WhatsApp expects phone numbers without + prefix, with country code
+      // Validate phone number format (10-15 digits without + prefix)
+      const phoneRegex = /^\d{10,15}$/;
+      if (!phoneRegex.test(digitsTo)) {
+        return NextResponse.json(
+          {
+            error: 'Invalid phone number format',
+            message: 'Phone number must contain 10-15 digits (e.g., 918097296453)',
+          },
+          { status: 400 },
+        );
+      }
+
       if (!settings.access_token_added || !settings.access_token || !settings.phone_number_id) {
         console.error('WhatsApp API credentials not configured for user:', user.id);
         return NextResponse.json(
@@ -159,7 +236,7 @@ export async function POST(request: NextRequest) {
 
       const messageData: Record<string, unknown> = {
         messaging_product: 'whatsapp',
-        to: cleanPhoneNumber,
+        to: digitsTo,
         type: 'text',
         text: { body: message },
       };
@@ -173,7 +250,7 @@ export async function POST(request: NextRequest) {
       }
 
       console.log('Sending message to WhatsApp API:', {
-        to: cleanPhoneNumber,
+        to: digitsTo,
         originalTo: to,
         message: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
         userId: user.id,
@@ -255,9 +332,25 @@ export async function POST(request: NextRequest) {
 
     // Prepare message object for database insertion
     // Note: sender_id is phone number (TEXT), receiver_id is auth user (UUID)
+    const safeOriginalMessage =
+      typeof originalMessage === 'string' && originalMessage.trim().length > 0
+        ? originalMessage.trim()
+        : null;
+    const safeTranslatedFrom =
+      typeof autoTranslatedFrom === 'string' && autoTranslatedFrom.trim().length > 0
+        ? autoTranslatedFrom.trim()
+        : null;
+    const safeTranslatedTo =
+      typeof autoTranslatedTo === 'string' && autoTranslatedTo.trim().length > 0
+        ? autoTranslatedTo.trim()
+        : null;
+
     const messageObject = {
       id: messageId || `outgoing_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      sender_id: cleanPhoneNumber, // Recipient phone number (sender in DB)
+      sender_id:
+        provider === 'meta_messenger'
+          ? String(to).trim()
+          : digitsTo, // contact id in DB
       receiver_id: user.id, // Current authenticated user (receiver in DB)
       content: message,
       timestamp: timestamp,
@@ -266,6 +359,15 @@ export async function POST(request: NextRequest) {
       message_type: 'text', // For now, we only send text messages
       media_data: JSON.stringify({
         provider,
+        ...(safeOriginalMessage
+          ? {
+              original_text: safeOriginalMessage,
+              translated_text: message,
+              auto_translated_outgoing: true,
+              ...(safeTranslatedFrom ? { auto_translated_from: safeTranslatedFrom } : {}),
+              ...(safeTranslatedTo ? { auto_translated_to: safeTranslatedTo } : {}),
+            }
+          : {}),
         ...(quoted
           ? {
               quoted_message_id: quoted,
@@ -304,7 +406,7 @@ export async function POST(request: NextRequest) {
         [
           {
             owner_id: user.id,
-            phone: cleanPhoneNumber,
+            phone: messageObject.sender_id,
             last_active: timestamp,
           },
         ],
