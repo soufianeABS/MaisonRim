@@ -38,6 +38,13 @@ export async function POST(request: NextRequest) {
       .filter((m) => m.id && m.text)
       .slice(0, 80);
 
+    console.log("[translation/bulk-generate] request", {
+      userId: user.id,
+      targetLanguage,
+      messageCount: messages.length,
+      sampleIds: messages.slice(0, 10).map((m) => m.id),
+    });
+
     if (messages.length === 0) {
       return NextResponse.json({ translations: {} as Record<string, string> });
     }
@@ -70,6 +77,12 @@ export async function POST(request: NextRequest) {
       error?: { message?: string };
     };
     if (!geminiRes.ok) {
+      console.error("[translation/bulk-generate] gemini error", {
+        userId: user.id,
+        targetLanguage,
+        status: geminiRes.status,
+        error: data.error?.message || "Gemini request failed",
+      });
       return NextResponse.json({ error: data.error?.message || "Gemini request failed" }, { status: 502 });
     }
 
@@ -80,6 +93,11 @@ export async function POST(request: NextRequest) {
     try {
       parsed = JSON.parse(jsonText) as { translations?: Record<string, string> };
     } catch {
+      console.error("[translation/bulk-generate] json parse failed", {
+        userId: user.id,
+        targetLanguage,
+        rawPreview: raw.slice(0, 300),
+      });
       return NextResponse.json({ translations: {} as Record<string, string> });
     }
 
@@ -105,8 +123,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    console.log("[translation/bulk-generate] response", {
+      userId: user.id,
+      targetLanguage,
+      requested: messages.length,
+      translated: Object.keys(translations).length,
+    });
+
     return NextResponse.json({ translations });
   } catch (e) {
+    console.error("[translation/bulk-generate] unexpected error", e);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Unexpected server error" },
       { status: 500 },

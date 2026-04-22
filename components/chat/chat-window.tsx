@@ -426,6 +426,9 @@ export function ChatWindow({
   const [savingConversationAutoTranslate, setSavingConversationAutoTranslate] = useState(false);
   const autoTranslateInFlightRef = useRef<Set<string>>(new Set());
   const autoTranslatedOnceRef = useRef<Set<string>>(new Set());
+  /** Blocks duplicate sends while auto-translate awaits network (parent isLoading stays false until then). */
+  const commitSendLockedRef = useRef(false);
+  const [commitSendBusy, setCommitSendBusy] = useState(false);
 
   const [devComposeOpen, setDevComposeOpen] = useState(false);
   const [devComposeKind, setDevComposeKind] = useState<"in" | "out" | "both" | null>(
@@ -597,10 +600,18 @@ export function ChatWindow({
             message_ids: ids,
             target_language: translationTargetLang,
             include_any_existing: true,
+            auto_generate_missing: conversationAutoTranslate,
           }),
         });
         const data = await readResponseJson<{ translations?: Record<string, string> }>(res);
-        if (!res.ok || cancelled) return;
+        if (!res.ok) {
+          const err = (data as { error?: string }).error || "Translation batch failed";
+          if (!cancelled && conversationAutoTranslate) {
+            alert(`Auto-translate error: ${err}`);
+          }
+          return;
+        }
+        if (cancelled) return;
         if (data.translations && typeof data.translations === "object") {
           setTranslationByMessageId(data.translations);
         }
@@ -654,23 +665,90 @@ export function ChatWindow({
       !conversationAutoTranslate ||
       !translationTargetLang
     ) {
+      if (selectedUser && !broadcastGroupName) {
+        console.log("[auto-translate] skipped effect", {
+          contactId: selectedUser.id,
+          conversationAutoTranslate,
+          translationTargetLang,
+          hasBroadcast: Boolean(broadcastGroupName),
+        });
+      }
       return;
     }
-    const inbound = messages.filter((m) => !m.is_sent_by_me && !m.id.startsWith("optimistic_"));
-    const candidates = inbound.filter((m) => {
+    const conversationMessages = messages.filter((m) => !m.id.startsWith("optimistic_"));
+    const conversationSnapshot = conversationMessages.slice(-20).map((m) => {
+      const md = parseMessageMediaJson(m);
+      const translatable = getTranslatableText(m, md);
+      return {
+        id: m.id,
+        type: m.message_type || "text",
+        is_sent_by_me: m.is_sent_by_me,
+        hasTranslationInState: Boolean(translationByMessageId[m.id]),
+        inFlight: autoTranslateInFlightRef.current.has(m.id),
+        alreadyAttempted: autoTranslatedOnceRef.current.has(m.id),
+        translatablePreview: translatable ? translatable.slice(0, 120) : null,
+      };
+    });
+    console.log("[auto-translate] effect triggered", {
+      contactId: selectedUser.id,
+      totalMessages: messages.length,
+      eligibleConversationMessages: conversationMessages.length,
+      targetLanguage: translationTargetLang,
+      conversationSnapshot,
+    });
+    const candidates = conversationMessages.filter((m) => {
       if (translationByMessageId[m.id]) return false;
       if (autoTranslateInFlightRef.current.has(m.id)) return false;
       if (autoTranslatedOnceRef.current.has(m.id)) return false;
       const md = parseMessageMediaJson(m);
       return Boolean(getTranslatableText(m, md));
     });
-    if (candidates.length === 0) return;
+    const skipped = conversationMessages
+      .filter((m) => !candidates.some((c) => c.id === m.id))
+      .slice(-20)
+      .map((m) => {
+        const md = parseMessageMediaJson(m);
+        const translatable = getTranslatableText(m, md);
+        return {
+          id: m.id,
+          hasTranslationInState: Boolean(translationByMessageId[m.id]),
+          inFlight: autoTranslateInFlightRef.current.has(m.id),
+          alreadyAttempted: autoTranslatedOnceRef.current.has(m.id),
+          hasTranslatableText: Boolean(translatable),
+          preview: translatable ? translatable.slice(0, 120) : null,
+        };
+      });
+    if (candidates.length === 0) {
+      console.log("[auto-translate] no candidates", {
+        contactId: selectedUser.id,
+        totalMessages: conversationMessages.length,
+        alreadyTranslated: Object.keys(translationByMessageId).length,
+        inFlight: autoTranslateInFlightRef.current.size,
+        alreadyAttempted: autoTranslatedOnceRef.current.size,
+        skipped,
+      });
+      return;
+    }
+    console.log("[auto-translate] candidates selected", {
+      contactId: selectedUser.id,
+      candidateCount: candidates.length,
+      sampleIds: candidates.slice(0, 10).map((m) => m.id),
+    });
     const run = async () => {
       const initialBatch = candidates
         .map((m) => ({ id: m.id, text: getTranslatableText(m, parseMessageMediaJson(m)) || "" }))
         .filter((x) => x.text)
         .slice(0, 60);
-      if (initialBatch.length === 0) return;
+      if (initialBatch.length === 0) {
+        console.log("[auto-translate] initial batch empty after text extraction", {
+          contactId: selectedUser.id,
+        });
+        return;
+      }
+      console.log("[auto-translate] initial batch ready", {
+        contactId: selectedUser.id,
+        batchSize: initialBatch.length,
+      });
       let batch = initialBatch;
       try {
         const existingRes = await fetch("/api/translation/batch", {
@@ -690,11 +768,30 @@ export function ChatWindow({
           setTranslationByMessageId((prev) => ({ ...prev, ...existingData.translations }));
           const already = new Set(Object.keys(existingData.translations));
           batch = initialBatch.filter((x) => !already.has(x.id));
+          console.log("[auto-translate] existing translations loaded", {
+            contactId: selectedUser.id,
+            existingCount: already.size,
+            remainingForGeneration: batch.length,
+          });
+        } else {
+          console.warn("[auto-translate] existing translation lookup failed", {
+            contactId: selectedUser.id,
+            status: existingRes.status,
+          });
         }
-      } catch {
+      } catch (err) {
         // Ignore cache-check failures and continue with batch generation.
+        console.warn("[auto-translate] existing translation lookup threw", {
+          contactId: selectedUser.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-      if (batch.length === 0) return;
+      if (batch.length === 0) {
+        console.log("[auto-translate] no generation required after existing lookup", {
+          contactId: selectedUser.id,
+        });
+        return;
+      }
       for (const item of batch) autoTranslateInFlightRef.current.add(item.id);
       try {
         const res = await fetch("/api/translation/bulk-generate", {
@@ -709,14 +806,36 @@ export function ChatWindow({
         const data = await readResponseJson<{ translations?: Record<string, string> }>(res);
         if (res.ok && data.translations && typeof data.translations === "object") {
           setTranslationByMessageId((prev) => ({ ...prev, ...data.translations }));
+          console.log("[auto-translate] bulk generation success", {
+            contactId: selectedUser.id,
+            requested: batch.length,
+            received: Object.keys(data.translations).length,
+          });
+        } else {
+          console.warn("[auto-translate] bulk generation returned no translations", {
+            contactId: selectedUser.id,
+            status: res.status,
+            requested: batch.length,
+          });
         }
-      } catch {
+      } catch (err) {
         // Keep chat flow smooth; user can still translate manually.
+        console.warn("[auto-translate] bulk generation threw", {
+          contactId: selectedUser.id,
+          error: err instanceof Error ? err.message : String(err),
+          requested: batch.length,
+        });
       } finally {
         for (const item of batch) {
           autoTranslateInFlightRef.current.delete(item.id);
           autoTranslatedOnceRef.current.add(item.id);
         }
+        console.log("[auto-translate] batch finalized", {
+          contactId: selectedUser.id,
+          finalizedCount: batch.length,
+          inFlightRemaining: autoTranslateInFlightRef.current.size,
+          attemptedTotal: autoTranslatedOnceRef.current.size,
+        });
       }
     };
     void run();
@@ -1190,71 +1309,79 @@ export function ChatWindow({
     ) {
       return;
     }
-    const rawMessage = messageInput.trim();
-    let finalMessage = rawMessage;
-    let autoTranslatedFrom: string | undefined;
-    let autoTranslatedTo: string | undefined;
-    if (
-      selectedUser &&
-      !broadcastGroupName &&
-      conversationAutoTranslate
-    ) {
-      try {
-        const recentSamples = [...messages]
-          .reverse()
-          .filter((m) => !m.id.startsWith("optimistic_"))
-          .map((m) => getTranslatableText(m, parseMessageMediaJson(m)))
-          .filter((t): t is string => Boolean(t && t.trim().length > 0))
-          .slice(0, 4);
-        if (recentSamples.length > 0) {
-          const detectRes = await fetch("/api/translation/detect", {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ samples: recentSamples }),
-          });
-          const detectData = await readResponseJson<{ language?: string }>(detectRes);
-          const targetLang = detectRes.ok ? detectData.language?.trim() : "";
-          if (targetLang && targetLang !== "und") {
-            const translateRes = await fetch("/api/translation/instant", {
+    if (commitSendLockedRef.current) return;
+    commitSendLockedRef.current = true;
+    setCommitSendBusy(true);
+    try {
+      const rawMessage = messageInput.trim();
+      let finalMessage = rawMessage;
+      let autoTranslatedFrom: string | undefined;
+      let autoTranslatedTo: string | undefined;
+      if (
+        selectedUser &&
+        !broadcastGroupName &&
+        conversationAutoTranslate
+      ) {
+        try {
+          const recentSamples = [...messages]
+            .reverse()
+            .filter((m) => !m.id.startsWith("optimistic_"))
+            .map((m) => getTranslatableText(m, parseMessageMediaJson(m)))
+            .filter((t): t is string => Boolean(t && t.trim().length > 0))
+            .slice(0, 4);
+          if (recentSamples.length > 0) {
+            const detectRes = await fetch("/api/translation/detect", {
               method: "POST",
               credentials: "include",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                text: rawMessage,
-                target_language: targetLang,
-              }),
+              body: JSON.stringify({ samples: recentSamples }),
             });
-            const trData = await readResponseJson<{ translated_text?: string }>(translateRes);
-            const translated = translateRes.ok ? trData.translated_text?.trim() : "";
-            if (translated) {
-              finalMessage = translated;
-              autoTranslatedFrom = "auto";
-              autoTranslatedTo = targetLang;
+            const detectData = await readResponseJson<{ language?: string }>(detectRes);
+            const targetLang = detectRes.ok ? detectData.language?.trim() : "";
+            if (targetLang && targetLang !== "und") {
+              const translateRes = await fetch("/api/translation/instant", {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  text: rawMessage,
+                  target_language: targetLang,
+                }),
+              });
+              const trData = await readResponseJson<{ translated_text?: string }>(translateRes);
+              const translated = translateRes.ok ? trData.translated_text?.trim() : "";
+              if (translated) {
+                finalMessage = translated;
+                autoTranslatedFrom = "auto";
+                autoTranslatedTo = targetLang;
+              }
             }
           }
+        } catch {
+          // If auto-translation fails, send original text.
         }
-      } catch {
-        // If auto-translation fails, send original text.
       }
-    }
 
-    await onSendMessage(finalMessage, {
-      ...(replyingTo ? { quotedMessageId: replyingTo.id } : {}),
-      ...(finalMessage !== rawMessage
-        ? {
-            originalMessage: rawMessage,
-            autoTranslatedFrom,
-            autoTranslatedTo,
-          }
-        : {}),
-    });
-    setReplyingTo(null);
-    setMessageInput("");
-    requestAnimationFrame(() => {
-      messageInputRef.current?.focus();
-      adjustMessageInputHeight();
-    });
+      await onSendMessage(finalMessage, {
+        ...(replyingTo ? { quotedMessageId: replyingTo.id } : {}),
+        ...(finalMessage !== rawMessage
+          ? {
+              originalMessage: rawMessage,
+              autoTranslatedFrom,
+              autoTranslatedTo,
+            }
+          : {}),
+      });
+      setReplyingTo(null);
+      setMessageInput("");
+      requestAnimationFrame(() => {
+        messageInputRef.current?.focus();
+        adjustMessageInputHeight();
+      });
+    } finally {
+      commitSendLockedRef.current = false;
+      setCommitSendBusy(false);
+    }
   }, [
     messageInput,
     selectedUser,
@@ -1333,8 +1460,9 @@ export function ChatWindow({
   const handleMessageInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== "Enter" || e.shiftKey) return;
     if (e.nativeEvent.isComposing) return;
+    if (commitSendLockedRef.current) return;
     e.preventDefault();
-    commitSend();
+    void commitSend();
   };
 
   const clearMediaUploadInitialFiles = useCallback(() => {
@@ -1343,7 +1471,8 @@ export function ChatWindow({
 
   const handleMessagePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      if (!selectedUser || broadcastGroupName || isLoading || sendingMedia) return;
+      if (!selectedUser || broadcastGroupName || isLoading || sendingMedia || commitSendBusy)
+        return;
       const items = e.clipboardData?.items;
       if (!items?.length) return;
       for (let i = 0; i < items.length; i++) {
@@ -1368,7 +1497,7 @@ export function ChatWindow({
         return;
       }
     },
-    [selectedUser, broadcastGroupName, isLoading, sendingMedia],
+    [selectedUser, broadcastGroupName, isLoading, sendingMedia, commitSendBusy],
   );
 
   useEffect(() => {
@@ -1398,7 +1527,7 @@ export function ChatWindow({
 
   const insertComposerEmoji = useCallback(
     (emoji: string) => {
-      if (isLoading || sendingMedia) return;
+      if (isLoading || sendingMedia || commitSendBusy) return;
       const ta = messageInputRef.current;
       const maxLen = 1000;
       const prev = messageInput;
@@ -1426,7 +1555,7 @@ export function ChatWindow({
         adjustMessageInputHeight();
       });
     },
-    [messageInput, isLoading, sendingMedia, adjustMessageInputHeight],
+    [messageInput, isLoading, sendingMedia, commitSendBusy, adjustMessageInputHeight],
   );
 
   const loadReplyAgents = useCallback(async () => {
@@ -2826,7 +2955,7 @@ export function ChatWindow({
             >
               <h2 className="truncate font-semibold text-foreground">{getDisplayName(selectedUser)}</h2>
               <p className="text-sm text-muted-foreground">
-                {isLoading || sendingMedia ? (
+                {isLoading || sendingMedia || commitSendBusy ? (
                   <span className="flex items-center gap-1">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     {sendingMedia ? 'Sending media...' : 'Sending message...'}
@@ -3330,7 +3459,7 @@ export function ChatWindow({
                 <ContactDataTriggerButton
                   active={contactDataOpen}
                   onClick={() => setContactDataOpen((o) => !o)}
-                  disabled={isLoading || sendingMedia}
+                  disabled={isLoading || sendingMedia || commitSendBusy}
                 />
                 <ContactDataPopover
                   open={contactDataOpen}
@@ -3358,7 +3487,7 @@ export function ChatWindow({
               onKeyDown={handleMessageInputKeyDown}
               onPaste={handleMessagePaste}
               placeholder={
-                isLoading || sendingMedia
+                isLoading || sendingMedia || commitSendBusy
                   ? "Sending..."
                   : broadcastGroupName
                     ? "Type broadcast message..."
@@ -3368,7 +3497,7 @@ export function ChatWindow({
               rows={1}
               className="min-h-[42px] max-h-[160px] w-full resize-none overflow-y-auto rounded-2xl border-border py-2.5 pl-11 pr-4 focus-visible:ring-chat-menu"
               maxLength={1000}
-              disabled={isLoading || sendingMedia}
+              disabled={isLoading || sendingMedia || commitSendBusy}
               autoFocus={!isMobile}
             />
             <button
@@ -3378,7 +3507,7 @@ export function ChatWindow({
               aria-expanded={composerEmojiPickerOpen}
               aria-haspopup="dialog"
               aria-label="Insert emoji"
-              disabled={isLoading || sendingMedia}
+              disabled={isLoading || sendingMedia || commitSendBusy}
               onClick={(e) => {
                 e.preventDefault();
                 setComposerEmojiPickerOpen((o) => !o);
@@ -3413,10 +3542,10 @@ export function ChatWindow({
           </div>
           <Button 
             type="submit" 
-            disabled={!messageInput.trim() || isLoading || sendingMedia}
+            disabled={!messageInput.trim() || isLoading || sendingMedia || commitSendBusy}
             className="rounded-full bg-chat-menu px-6 py-2 text-chat-menu-fg transition-all hover:bg-chat-menu-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isLoading || sendingMedia ? (
+            {isLoading || sendingMedia || commitSendBusy ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Send className="h-4 w-4" />
