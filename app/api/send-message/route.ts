@@ -65,6 +65,39 @@ export async function POST(request: NextRequest) {
       (settings as { messaging_provider?: string | null }).messaging_provider ||
       'whatsapp_cloud';
 
+    // Hard dedupe guard: if two identical send requests arrive nearly together,
+    // return the first one instead of sending a second provider message.
+    const duplicateWindowStartIso = new Date(Date.now() - 3500).toISOString();
+    const dedupeSenderId = provider === 'meta_messenger' ? String(to).trim() : digitsTo;
+    const { data: recentDuplicate } = await supabase
+      .from('messages')
+      .select('id, timestamp')
+      .eq('receiver_id', user.id)
+      .eq('sender_id', dedupeSenderId)
+      .eq('is_sent_by_me', true)
+      .eq('content', message)
+      .gte('timestamp', duplicateWindowStartIso)
+      .order('timestamp', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (recentDuplicate?.id) {
+      console.warn('Duplicate send prevented (within dedupe window):', {
+        provider,
+        to: dedupeSenderId,
+        messagePreview: message.substring(0, 60),
+        existingMessageId: recentDuplicate.id,
+      });
+      return NextResponse.json({
+        success: true,
+        deduped: true,
+        messageId: recentDuplicate.id,
+        timestamp: recentDuplicate.timestamp ?? new Date().toISOString(),
+        provider,
+        storedInDb: true,
+      });
+    }
+
     let providerMessageId: string | null = null;
     let providerRawResponse: unknown = null;
 

@@ -142,6 +142,11 @@ export default function ChatPage() {
   const [broadcastGroupName, setBroadcastGroupName] = useState<string | null>(null);
   /** 1:1 thread: fetching messages from RPC (false when showing cached prefetch). */
   const [threadLoading, setThreadLoading] = useState(false);
+  /**
+   * Synchronous guard against duplicate sends in the same event loop tick.
+   * State updates are async, so this closes the short reentrancy window.
+   */
+  const sendingMessageRef = useRef(false);
   const supabase = createClient();
   const avatarBackfillAttemptedRef = useState(() => new Set<string>())[0];
   const avatarBackfillTriggeredRef = useRef(false);
@@ -1050,8 +1055,9 @@ export default function ChatPage() {
       return;
     }
     
-    if (!selectedUser || !user || sendingMessage) return;
+    if (!selectedUser || !user || sendingMessageRef.current || sendingMessage) return;
 
+    sendingMessageRef.current = true;
     setSendingMessage(true);
     
     // Generate optimistic message ID
@@ -1167,6 +1173,7 @@ export default function ChatPage() {
         console.error('Fallback storage failed:', fallbackError);
       }
     } finally {
+      sendingMessageRef.current = false;
       setSendingMessage(false);
     }
   };
