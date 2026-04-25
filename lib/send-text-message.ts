@@ -16,6 +16,26 @@ type UserSettingsRow = {
   messenger_page_access_token?: string | null;
 };
 
+type SupabaseLike = {
+  from: (table: string) => {
+    select: (...args: any[]) => any; // typed loosely; we only need chaining shape
+    insert?: (...args: any[]) => any;
+    upsert?: (...args: any[]) => any;
+    update?: (...args: any[]) => any;
+    delete?: (...args: any[]) => any;
+    eq?: (...args: any[]) => any;
+    gte?: (...args: any[]) => any;
+    order?: (...args: any[]) => any;
+    limit?: (...args: any[]) => any;
+    maybeSingle?: (...args: any[]) => any;
+    single?: (...args: any[]) => any;
+    in?: (...args: any[]) => any;
+  };
+};
+
+type WhatsAppGraphError = { message?: string; code?: number; type?: string };
+type WhatsAppTextSendResponse = { messages?: Array<{ id?: string }> ; error?: WhatsAppGraphError } | { raw?: string };
+
 function normalizeProvider(v: unknown): Provider {
   if (v === "green_api") return "green_api";
   if (v === "meta_messenger") return "meta_messenger";
@@ -23,9 +43,7 @@ function normalizeProvider(v: unknown): Provider {
 }
 
 export async function sendTextMessage(params: {
-  supabase: {
-    from: (table: string) => any;
-  };
+  supabase: SupabaseLike;
   userId: string;
   to: string;
   message: string;
@@ -223,16 +241,14 @@ export async function sendTextMessage(params: {
       body: JSON.stringify(messageData),
     });
 
-    const responseData = await whatsappResponse.json().catch(async () => {
+    const responseData: WhatsAppTextSendResponse = await whatsappResponse.json().catch(async () => {
       const txt = await whatsappResponse.text().catch(() => "");
       return { raw: txt };
     });
     providerRawResponse = responseData;
 
     if (!whatsappResponse.ok) {
-      const metaErr = (responseData as any)?.error as
-        | { message?: string; code?: number; type?: string }
-        | undefined;
+      const metaErr = "error" in responseData ? responseData.error : undefined;
       const metaMessage = typeof metaErr?.message === "string" ? metaErr.message : null;
       const tokenExpired =
         metaErr?.code === 190 || (metaMessage?.toLowerCase().includes("access token") ?? false);
@@ -244,7 +260,10 @@ export async function sendTextMessage(params: {
       throw new Error(errorText);
     }
 
-    providerMessageId = (responseData as any)?.messages?.[0]?.id ?? null;
+    providerMessageId =
+      "messages" in responseData && Array.isArray(responseData.messages)
+        ? responseData.messages?.[0]?.id ?? null
+        : null;
   }
 
   const messageId = providerMessageId || `outgoing_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;

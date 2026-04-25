@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { createClient } from '@/lib/supabase/server';
-import { messageIdVariants, previewSnippet } from '@/lib/message-quote';
-import { logWhatsAppGraphCall } from '@/lib/whatsapp-graph-debug';
 import { sendTextMessage } from '@/lib/send-text-message';
 
 /**
