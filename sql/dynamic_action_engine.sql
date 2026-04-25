@@ -24,6 +24,8 @@ create table if not exists public.api_actions (
   method text not null default 'POST',
   payload_template jsonb not null default '{}'::jsonb,
   response_map jsonb not null default '{}'::jsonb,
+  message_template text not null default '',
+  auto_send_message boolean not null default false,
   use_server_proxy boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

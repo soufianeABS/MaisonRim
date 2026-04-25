@@ -1,6 +1,7 @@
 import { JSONPath } from "jsonpath-plus";
 
 import { createClient } from "@/lib/supabase/server";
+import { sendTextMessage } from "@/lib/send-text-message";
 import { fetchWithServerProxy, isLikelyCloudflareChallenge } from "@/lib/server-proxy-fetch";
 
 type HttpMethod = "GET" | "POST";
@@ -22,6 +23,8 @@ type ApiActionRow = {
   method: HttpMethod;
   payload_template: unknown;
   response_map: unknown;
+  message_template?: string | null;
+  auto_send_message?: boolean | null;
   /** When absent (old row), treated as false. */
   use_server_proxy?: boolean | null;
 };
@@ -73,6 +76,42 @@ function setMetadataPath(metadata: Record<string, unknown>, path: string, value:
     cur = cur[p] as Record<string, unknown>;
   }
   cur[parts[parts.length - 1]!] = value;
+}
+
+function readPath(source: unknown, path: string): unknown {
+  if (!path.trim()) return source;
+  const parts = path.split(".").filter(Boolean);
+  let current: unknown = source;
+  for (const part of parts) {
+    if (!isRecord(current)) return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function stringifyTemplateValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
+function renderMessageTemplate(params: {
+  template: string;
+  given: Record<string, unknown>;
+  received: unknown;
+}): string {
+  return params.template.replace(/\{\{\s*(given|received)(?:\.([a-zA-Z0-9_.-]+))?\s*\}\}/g, (_m, source, path) => {
+    const keyPath = typeof path === "string" ? path : "";
+    if (source === "given") {
+      return stringifyTemplateValue(readPath(params.given, keyPath));
+    }
+    return stringifyTemplateValue(readPath(params.received, keyPath));
+  });
 }
 
 async function logActionError(params: {
@@ -131,7 +170,7 @@ export class ActionRunner {
     if (statusId) {
       const { data } = await supabase
         .from("api_actions")
-        .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, use_server_proxy")
+        .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
         .eq("owner_id", user.id)
         .eq("status_id", statusId)
         .maybeSingle();
@@ -140,7 +179,7 @@ export class ActionRunner {
     if (!action && tagName) {
       const { data } = await supabase
         .from("api_actions")
-        .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, use_server_proxy")
+        .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
         .eq("owner_id", user.id)
         .ilike("tag_name", tagName)
         .maybeSingle();
@@ -330,7 +369,42 @@ export class ActionRunner {
       throw new Error("Failed to save action result");
     }
 
-    return { success: true, response: responseJson };
+    const messageTemplate = (action.message_template ?? "").trim();
+    const renderedMessage = messageTemplate
+      ? renderMessageTemplate({
+          template: messageTemplate,
+          given: {
+            ...ctx,
+            payload,
+            method: action.method,
+            url: action.url,
+          },
+          received: responseJson,
+        })
+      : "";
+
+    const shouldAutoSend = action.auto_send_message === true;
+    if (shouldAutoSend && renderedMessage.trim()) {
+      try {
+        await sendTextMessage({
+          supabase,
+          userId: user.id,
+          to: contactId,
+          message: renderedMessage.trim(),
+        });
+      } catch (e) {
+        await logActionError({
+          ownerId: user.id,
+          contactId,
+          actionId: action.id,
+          tagName: tagName || action.tag_name,
+          message: "Auto-send message failed",
+          details: { error: e instanceof Error ? e.message : String(e) },
+        });
+      }
+    }
+
+    return { success: true, response: responseJson, renderedMessage, autoSent: shouldAutoSend };
   }
 }
 

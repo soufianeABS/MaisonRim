@@ -5,6 +5,23 @@ import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
+/** Logs request/response to the server terminal. On by default in development; set ACTIONS_RUN_DEBUG=1 in production or ACTIONS_RUN_DEBUG=0 to silence in dev. */
+function actionsRunDebugEnabled(): boolean {
+  if (process.env.ACTIONS_RUN_DEBUG === "1") return true;
+  if (process.env.ACTIONS_RUN_DEBUG === "0") return false;
+  return process.env.NODE_ENV === "development";
+}
+
+function previewJson(value: unknown, maxChars = 12_000): string {
+  try {
+    const s = JSON.stringify(value, null, 2);
+    if (s.length <= maxChars) return s;
+    return `${s.slice(0, maxChars)}\n… truncated (${s.length} chars total)`;
+  } catch {
+    return String(value);
+  }
+}
+
 function classifyError(e: unknown): { status: number; message: string; hint?: string } {
   const msg = e instanceof Error ? e.message : "Action failed";
   const lower = msg.toLowerCase();
@@ -51,8 +68,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "conversationId is required" }, { status: 400 });
   }
 
+  const debug = actionsRunDebugEnabled();
+  if (debug) {
+    console.log("[actions/run] request", {
+      conversationId,
+      tagName: tagName ?? null,
+      statusId: statusId ?? null,
+      userId: user.id,
+    });
+  }
+
   try {
     const result = await ActionRunner.run({ conversationId, tagName, statusId });
+    if (debug) {
+      console.log("[actions/run] response", previewJson(result));
+    }
     return NextResponse.json(result);
   } catch (e) {
     const classified = classifyError(e);

@@ -573,7 +573,9 @@ export function ChatWindow({
   }, [loadTranslationPrefs]);
 
   useEffect(() => {
-    if (translationUiEnabled !== true && !conversationAutoTranslate) {
+    // Never call translation batch endpoints unless the conversation-level
+    // Auto translate toggle is explicitly enabled.
+    if (!conversationAutoTranslate) {
       setTranslationByMessageId({});
       return;
     }
@@ -1752,9 +1754,18 @@ export function ChatWindow({
       if (!res.ok) {
         throw new Error(data?.error || "Action failed");
       }
+      const renderedMessage =
+        data && typeof data.renderedMessage === "string" ? data.renderedMessage.trim() : "";
+      if (renderedMessage) {
+        setMessageInput(renderedMessage.slice(0, 1000));
+      }
       // Response is stored in contacts.metadata by the server; show quick confirmation.
       console.log("Dynamic action executed:", data);
-      alert("Action executed. Response saved to conversation metadata.");
+      alert(
+        renderedMessage
+          ? "Action executed. Response saved and message text prepared."
+          : "Action executed. Response saved to conversation metadata.",
+      );
       await onUsersUpdate?.();
     } catch (e) {
       console.error("Run action:", e);

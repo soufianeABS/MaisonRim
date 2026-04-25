@@ -19,7 +19,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("api_actions")
-    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, use_server_proxy, created_at, updated_at")
+    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy, created_at, updated_at")
     .eq("owner_id", user.id)
     .order("updated_at", { ascending: false });
 
@@ -49,6 +49,8 @@ export async function POST(request: NextRequest) {
   const useServerProxy = cleanUseServerProxy(b.use_server_proxy);
   const payloadTemplate = b.payload_template ?? {};
   const responseMap = b.response_map ?? {};
+  const messageTemplate = typeof b.message_template === "string" ? b.message_template : "";
+  const autoSendMessage = b.auto_send_message === true || b.auto_send_message === "true";
 
   if (!statusId && !tagName) {
     return NextResponse.json({ error: "status_id or tag_name is required" }, { status: 400 });
@@ -65,9 +67,11 @@ export async function POST(request: NextRequest) {
       method,
       payload_template: payloadTemplate,
       response_map: responseMap,
+      message_template: messageTemplate,
+      auto_send_message: autoSendMessage,
       use_server_proxy: useServerProxy,
     })
-    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, use_server_proxy, created_at, updated_at")
+    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy, created_at, updated_at")
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

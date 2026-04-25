@@ -21,8 +21,15 @@ type ApiAction = {
   method: "GET" | "POST";
   payload_template: unknown;
   response_map: unknown;
+  message_template?: string | null;
+  auto_send_message?: boolean | null;
   use_server_proxy?: boolean;
   updated_at: string;
+};
+
+type ResponseMapEntry = {
+  target: string;
+  jsonPath: string;
 };
 
 function pretty(v: unknown): string {
@@ -44,6 +51,25 @@ function parseJsonField(raw: string, fieldLabel: string): unknown {
   }
 }
 
+function responseMapToEntries(value: unknown): ResponseMapEntry[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.entries(value as Record<string, unknown>).map(([target, jsonPath]) => ({
+    target,
+    jsonPath: typeof jsonPath === "string" ? jsonPath : String(jsonPath ?? ""),
+  }));
+}
+
+function entriesToResponseMap(entries: ResponseMapEntry[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const entry of entries) {
+    const target = entry.target.trim();
+    const jsonPath = entry.jsonPath.trim();
+    if (!target || !jsonPath) continue;
+    out[target] = jsonPath;
+  }
+  return out;
+}
+
 export default function ActionsPage() {
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [actions, setActions] = useState<ApiAction[]>([]);
@@ -54,7 +80,11 @@ export default function ActionsPage() {
   const [url, setUrl] = useState("");
   const [method, setMethod] = useState<"GET" | "POST">("POST");
   const [payloadTemplate, setPayloadTemplate] = useState(pretty({ conversationId: "{{conversationId}}" }));
-  const [responseMap, setResponseMap] = useState(pretty({ "metadata.remote_url": "$.url" }));
+  const [responseMapEntries, setResponseMapEntries] = useState<ResponseMapEntry[]>([
+    { target: "metadata.remote_url", jsonPath: "$.url" },
+  ]);
+  const [messageTemplate, setMessageTemplate] = useState("");
+  const [autoSendMessage, setAutoSendMessage] = useState(false);
   const [useServerProxy, setUseServerProxy] = useState(false);
 
   const actionByStatus = useMemo(() => {
@@ -91,7 +121,7 @@ export default function ActionsPage() {
     if (!selectedStatusId) throw new Error("Pick a tag");
     const existing = actionByStatus.get(selectedStatusId) ?? null;
     const payload = parseJsonField(payloadTemplate, "payload_template");
-    const map = parseJsonField(responseMap, "response_map");
+    const map = entriesToResponseMap(responseMapEntries);
 
     const body = {
       status_id: selectedStatusId,
@@ -100,6 +130,8 @@ export default function ActionsPage() {
       method,
       payload_template: payload,
       response_map: map,
+      message_template: messageTemplate,
+      auto_send_message: autoSendMessage,
       use_server_proxy: useServerProxy,
     };
     if (!body.url) throw new Error("URL is required");
@@ -150,13 +182,17 @@ export default function ActionsPage() {
       setUrl(existing.url ?? "");
       setMethod(existing.method ?? "POST");
       setPayloadTemplate(pretty(existing.payload_template));
-      setResponseMap(pretty(existing.response_map));
+      setResponseMapEntries(responseMapToEntries(existing.response_map));
+      setMessageTemplate(existing.message_template ?? "");
+      setAutoSendMessage(Boolean(existing.auto_send_message));
       setUseServerProxy(Boolean(existing.use_server_proxy));
     } else {
       setUrl("");
       setMethod("POST");
       setPayloadTemplate(pretty({ conversationId: "{{conversationId}}" }));
-      setResponseMap(pretty({ "metadata.remote_url": "$.url" }));
+      setResponseMapEntries([{ target: "metadata.remote_url", jsonPath: "$.url" }]);
+      setMessageTemplate("");
+      setAutoSendMessage(false);
       setUseServerProxy(false);
     }
   };
@@ -269,11 +305,89 @@ export default function ActionsPage() {
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="act-map">response_map (JSON)</Label>
-                    <Textarea id="act-map" value={responseMap} onChange={(e) => setResponseMap(e.target.value)} rows={12} className="font-mono text-xs" />
+                    <Label>response_map</Label>
+                    <div className="space-y-2 rounded-md border border-border p-3">
+                      {responseMapEntries.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No mappings yet. Add one row below.</p>
+                      ) : (
+                        responseMapEntries.map((entry, index) => (
+                          <div key={index} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                            <Input
+                              value={entry.target}
+                              onChange={(e) =>
+                                setResponseMapEntries((prev) =>
+                                  prev.map((item, i) => (i === index ? { ...item, target: e.target.value } : item)),
+                                )
+                              }
+                              placeholder="target field (e.g. metadata.remote_url)"
+                            />
+                            <Input
+                              value={entry.jsonPath}
+                              onChange={(e) =>
+                                setResponseMapEntries((prev) =>
+                                  prev.map((item, i) => (i === index ? { ...item, jsonPath: e.target.value } : item)),
+                                )
+                              }
+                              placeholder="JSONPath (e.g. $.url)"
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              onClick={() => setResponseMapEntries((prev) => prev.filter((_, i) => i !== index))}
+                              title="Remove mapping row"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() =>
+                          setResponseMapEntries((prev) => [...prev, { target: "", jsonPath: "" }])
+                        }
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add response mapping
+                      </Button>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       Keys can be <code>metadata.foo</code> or a contact column: <code>custom_name</code>, <code>whatsapp_name</code>, <code>avatar_url</code>.
                     </p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="act-message-template">Message template (optional)</Label>
+                  <Textarea
+                    id="act-message-template"
+                    value={messageTemplate}
+                    onChange={(e) => setMessageTemplate(e.target.value)}
+                    rows={4}
+                    placeholder="Hi, URL: {{received.url}} | User: {{received.username}}"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Use <code>{"{{received.field}}"}</code> for API response values and <code>{"{{given.conversationId}}"}</code>, <code>{"{{given.tagName}}"}</code>,{" "}
+                    <code>{"{{given.payload.someKey}}"}</code> for request/context values. When action runs, this rendered text is pushed to the chat message box.
+                  </p>
+                  <div className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-3">
+                    <Checkbox
+                      id="act-auto-send"
+                      checked={autoSendMessage}
+                      onCheckedChange={(v) => setAutoSendMessage(v === true)}
+                    />
+                    <div className="space-y-1">
+                      <Label htmlFor="act-auto-send" className="cursor-pointer font-medium leading-none">
+                        Auto-send this message after action runs
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Sends from the server using your configured provider, so it works even if you close the browser.
+                      </p>
+                    </div>
                   </div>
                 </div>
               </CardContent>
