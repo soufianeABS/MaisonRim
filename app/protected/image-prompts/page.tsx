@@ -74,7 +74,7 @@ export default function ImagePromptsPage() {
   const legacyPrompts = useMemo(() => {
     if (typeof window === "undefined") return [];
     return loadImagePromptsFromStorage();
-  }, [items.length, migrationDismissed]);
+  }, []);
 
   const showMigrationBanner =
     !loading &&

@@ -632,7 +632,7 @@ export function ChatWindow({
       return;
     }
     setConversationAutoTranslate(selectedUser.auto_translate_enabled === true);
-  }, [selectedUser?.id, selectedUser?.auto_translate_enabled, broadcastGroupName]);
+  }, [selectedUser, broadcastGroupName]);
 
   const updateConversationAutoTranslate = useCallback(
     async (enabled: boolean) => {
@@ -842,7 +842,7 @@ export function ChatWindow({
     };
     void run();
   }, [
-    selectedUser?.id,
+    selectedUser,
     broadcastGroupName,
     conversationAutoTranslate,
     translationUiEnabled,

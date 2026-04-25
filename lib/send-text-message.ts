@@ -18,18 +18,18 @@ type UserSettingsRow = {
 
 type SupabaseLike = {
   from: (table: string) => {
-    select: (...args: any[]) => any; // typed loosely; we only need chaining shape
-    insert?: (...args: any[]) => any;
-    upsert?: (...args: any[]) => any;
-    update?: (...args: any[]) => any;
-    delete?: (...args: any[]) => any;
-    eq?: (...args: any[]) => any;
-    gte?: (...args: any[]) => any;
-    order?: (...args: any[]) => any;
-    limit?: (...args: any[]) => any;
-    maybeSingle?: (...args: any[]) => any;
-    single?: (...args: any[]) => any;
-    in?: (...args: any[]) => any;
+    select: (...args: unknown[]) => unknown;
+    insert?: (...args: unknown[]) => unknown;
+    upsert?: (...args: unknown[]) => unknown;
+    update?: (...args: unknown[]) => unknown;
+    delete?: (...args: unknown[]) => unknown;
+    eq?: (...args: unknown[]) => unknown;
+    gte?: (...args: unknown[]) => unknown;
+    order?: (...args: unknown[]) => unknown;
+    limit?: (...args: unknown[]) => unknown;
+    maybeSingle?: (...args: unknown[]) => unknown;
+    single?: (...args: unknown[]) => unknown;
+    in?: (...args: unknown[]) => unknown;
   };
 };
 
