@@ -1,4 +1,5 @@
 import { messageIdVariants, previewSnippet } from "@/lib/message-quote";
+import type { createClient } from "@/lib/supabase/server";
 import { logWhatsAppGraphCall } from "@/lib/whatsapp-graph-debug";
 
 type Provider = "whatsapp_cloud" | "green_api" | "meta_messenger";
@@ -16,27 +17,7 @@ type UserSettingsRow = {
   messenger_page_access_token?: string | null;
 };
 
-type SupabaseResponseLike = PromiseLike<{ data: unknown; error: unknown }>;
-
-type SupabaseQueryLike = {
-  select: (
-    columns?: string,
-    options?: { head?: boolean; count?: unknown },
-  ) => SupabaseQueryLike;
-  eq: (column: string, value: unknown) => SupabaseQueryLike;
-  gte: (column: string, value: unknown) => SupabaseQueryLike;
-  order: (column: string, options?: { ascending?: boolean }) => SupabaseQueryLike;
-  limit: (count: number) => SupabaseQueryLike;
-  in: (column: string, values: unknown[]) => SupabaseQueryLike;
-  maybeSingle: () => SupabaseResponseLike;
-  single: () => SupabaseResponseLike;
-  insert: (values: unknown) => SupabaseQueryLike & SupabaseResponseLike;
-  upsert: (values: unknown, options?: unknown) => SupabaseQueryLike & SupabaseResponseLike;
-};
-
-type SupabaseLike = {
-  from: (table: string) => SupabaseQueryLike;
-};
+type ServerSupabaseClient = Awaited<ReturnType<typeof createClient>>;
 
 type WhatsAppGraphError = { message?: string; code?: number; type?: string };
 type WhatsAppTextSendResponse = { messages?: Array<{ id?: string }> ; error?: WhatsAppGraphError } | { raw?: string };
@@ -48,7 +29,7 @@ function normalizeProvider(v: unknown): Provider {
 }
 
 export async function sendTextMessage(params: {
-  supabase: SupabaseLike;
+  supabase: ServerSupabaseClient;
   userId: string;
   to: string;
   message: string;
