@@ -16,21 +16,26 @@ type UserSettingsRow = {
   messenger_page_access_token?: string | null;
 };
 
+type SupabaseResponseLike = PromiseLike<{ data: unknown; error: unknown }>;
+
+type SupabaseQueryLike = {
+  select: (
+    columns?: string,
+    options?: { head?: boolean; count?: unknown },
+  ) => SupabaseQueryLike;
+  eq: (column: string, value: unknown) => SupabaseQueryLike;
+  gte: (column: string, value: unknown) => SupabaseQueryLike;
+  order: (column: string, options?: { ascending?: boolean }) => SupabaseQueryLike;
+  limit: (count: number) => SupabaseQueryLike;
+  in: (column: string, values: unknown[]) => SupabaseQueryLike;
+  maybeSingle: () => SupabaseResponseLike;
+  single: () => SupabaseResponseLike;
+  insert: (values: unknown) => SupabaseQueryLike & SupabaseResponseLike;
+  upsert: (values: unknown, options?: unknown) => SupabaseQueryLike & SupabaseResponseLike;
+};
+
 type SupabaseLike = {
-  from: (table: string) => {
-    select: (...args: unknown[]) => unknown;
-    insert?: (...args: unknown[]) => unknown;
-    upsert?: (...args: unknown[]) => unknown;
-    update?: (...args: unknown[]) => unknown;
-    delete?: (...args: unknown[]) => unknown;
-    eq?: (...args: unknown[]) => unknown;
-    gte?: (...args: unknown[]) => unknown;
-    order?: (...args: unknown[]) => unknown;
-    limit?: (...args: unknown[]) => unknown;
-    maybeSingle?: (...args: unknown[]) => unknown;
-    single?: (...args: unknown[]) => unknown;
-    in?: (...args: unknown[]) => unknown;
-  };
+  from: (table: string) => SupabaseQueryLike;
 };
 
 type WhatsAppGraphError = { message?: string; code?: number; type?: string };
