@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, FlaskConical, Trash2, Reply, Smile, Check, Languages } from "lucide-react";
+import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, Reply, Smile, Check, Languages, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchContactStatusesCached } from "@/lib/contact-statuses-cache";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
@@ -398,7 +398,7 @@ export function ChatWindow({
   const [loadingMedia, setLoadingMedia] = useState<Set<string>>(new Set());
   const [mediaUrlOverrides, setMediaUrlOverrides] = useState<Record<string, string>>({});
   const [runningAction, setRunningAction] = useState(false);
-  const [mappedActionsByStatus, setMappedActionsByStatus] = useState<Map<string, MappedAction>>(new Map());
+  const [mappedActionsByStatus, setMappedActionsByStatus] = useState<Map<string, MappedAction[]>>(new Map());
   const [audioDurations, setAudioDurations] = useState<{ [key: string]: number }>({});
   const [audioCurrentTime, setAudioCurrentTime] = useState<{ [key: string]: number }>({});
   const [showMediaUpload, setShowMediaUpload] = useState(false);
@@ -412,9 +412,6 @@ export function ChatWindow({
   const [replyAgents, setReplyAgents] = useState<{ id: string; name: string }[]>([]);
   const [replyAgentsLoading, setReplyAgentsLoading] = useState(false);
   const [suggestingReply, setSuggestingReply] = useState(false);
-  const [isLocalhostDev, setIsLocalhostDev] = useState(false);
-  const [devInsertLoading, setDevInsertLoading] = useState(false);
-  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const [translationTargetLang, setTranslationTargetLang] = useState<string | null>(null);
   /** When false, hide translate controls; null until prefs load. */
   const [translationUiEnabled, setTranslationUiEnabled] = useState<boolean | null>(null);
@@ -431,12 +428,6 @@ export function ChatWindow({
   const commitSendLockedRef = useRef(false);
   const [commitSendBusy, setCommitSendBusy] = useState(false);
 
-  const [devComposeOpen, setDevComposeOpen] = useState(false);
-  const [devComposeKind, setDevComposeKind] = useState<"in" | "out" | "both" | null>(
-    null,
-  );
-  const [devTextInbound, setDevTextInbound] = useState("");
-  const [devTextOutbound, setDevTextOutbound] = useState("");
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [reactionBusyId, setReactionBusyId] = useState<string | null>(null);
   /** Which message shows the quick-reaction emoji row (Smile button toggles; no hover-only emojis). */
@@ -530,14 +521,6 @@ export function ChatWindow({
     selectedUser?.status_rule_mode,
     selectedUser?.status_rule,
   ]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const h = window.location.hostname;
-    setIsLocalhostDev(
-      h === "localhost" || h === "127.0.0.1" || h === "::1",
-    );
-  }, []);
 
   const loadTranslationPrefs = useCallback(() => {
     void (async () => {
@@ -861,16 +844,18 @@ export function ChatWindow({
         const res = await fetch("/api/api-actions", { cache: "no-store" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) return;
-        const byStatus = new Map<string, MappedAction>();
+        const byStatus = new Map<string, MappedAction[]>();
         const actions = Array.isArray(data?.actions)
           ? (data.actions as Array<{ id?: unknown; status_id?: unknown; action_name?: unknown }>)
           : [];
         for (const a of actions) {
           if (typeof a?.status_id !== "string" || !a.status_id) continue;
-          if (byStatus.has(a.status_id)) continue;
           const actionId = typeof a.id === "string" ? a.id : "";
+          if (!actionId) continue;
           const actionName = typeof a.action_name === "string" ? a.action_name.trim() : "";
-          byStatus.set(a.status_id, { id: actionId, name: actionName });
+          const existing = byStatus.get(a.status_id) ?? [];
+          existing.push({ id: actionId, name: actionName });
+          byStatus.set(a.status_id, existing);
         }
         if (!cancelled) setMappedActionsByStatus(byStatus);
       } catch {
@@ -882,212 +867,6 @@ export function ChatWindow({
       cancelled = true;
     };
   }, []);
-
-  const insertDevTestMessages = async (
-    kind: "in" | "out" | "both",
-    texts?: { inbound?: string; outbound?: string },
-  ) => {
-    if (!selectedUser || broadcastGroupName) return;
-    setDevInsertLoading(true);
-    try {
-      const supabase = createClient();
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
-      if (authError || !user) {
-        alert("Not signed in.");
-        return;
-      }
-
-      const ts = new Date().toISOString();
-      const contactId = selectedUser.id;
-      const businessId = user.id;
-
-      const inboundContent =
-        texts?.inbound?.trim() || `[dev] Inbound test — ${ts}`;
-      const outboundContent =
-        texts?.outbound?.trim() || `[dev] Outbound test — ${ts}`;
-
-      await supabase.from("users").upsert(
-        {
-          id: businessId,
-          name: user.email ?? "Dev user",
-          last_active: ts,
-        },
-        { onConflict: "id" },
-      );
-
-      await supabase.from("users").upsert(
-        {
-          id: contactId,
-          name: selectedUser.name,
-          last_active: ts,
-        },
-        { onConflict: "id" },
-      );
-
-      const rows: Array<{
-        id: string;
-        sender_id: string;
-        receiver_id: string;
-        content: string;
-        timestamp: string;
-        is_sent_by_me: boolean;
-        is_read: boolean;
-        message_type: string;
-        media_data: null;
-      }> = [];
-
-      const base = Date.now();
-      if (kind === "in" || kind === "both") {
-        rows.push({
-          id: `dev_in_${base}_${Math.random().toString(36).slice(2, 9)}`,
-          sender_id: contactId,
-          receiver_id: businessId,
-          content: inboundContent,
-          timestamp: ts,
-          is_sent_by_me: false,
-          is_read: false,
-          message_type: "text",
-          media_data: null,
-        });
-      }
-      if (kind === "out" || kind === "both") {
-        rows.push({
-          id: `dev_out_${base + 1}_${Math.random().toString(36).slice(2, 9)}`,
-          sender_id: contactId,
-          receiver_id: businessId,
-          content: outboundContent,
-          timestamp: ts,
-          is_sent_by_me: true,
-          is_read: true,
-          message_type: "text",
-          media_data: null,
-        });
-      }
-
-      const { error } = await supabase.from("messages").insert(rows);
-      if (error) {
-        console.error("[dev] insert messages:", error);
-        alert(`Dev insert error: ${error.message}`);
-      }
-    } finally {
-      setDevInsertLoading(false);
-    }
-  };
-
-  const openDevCompose = (kind: "in" | "out" | "both") => {
-    setDevComposeKind(kind);
-    setDevTextInbound("");
-    setDevTextOutbound("");
-    setDevComposeOpen(true);
-  };
-
-  const submitDevCompose = async () => {
-    if (!devComposeKind) return;
-    await insertDevTestMessages(devComposeKind, {
-      inbound: devTextInbound,
-      outbound: devTextOutbound,
-    });
-    setDevComposeOpen(false);
-    setDevComposeKind(null);
-  };
-
-  const handleDeleteTestMessage = async (messageId: string) => {
-    if (!isLocalhostDev) return;
-    if (messageId.startsWith("optimistic_")) return;
-    if (!window.confirm("Delete this message? (localhost test mode)")) return;
-
-    setDeletingMessageId(messageId);
-    try {
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("messages")
-        .delete()
-        .eq("id", messageId);
-      if (error) {
-        console.error("[dev] delete message:", error);
-        alert(`Could not delete: ${error.message}`);
-      } else {
-        onMessageDeleted?.(messageId);
-      }
-    } finally {
-      setDeletingMessageId(null);
-    }
-  };
-
-  const handleDeleteConversation = async () => {
-    if (!isLocalhostDev) return;
-    if (!selectedUser || broadcastGroupName) return;
-    if (
-      !window.confirm(
-        "Delete the whole conversation? (localhost test mode)\n\nThis will delete all messages with this contact AND remove the contact from your list.",
-      )
-    ) {
-      return;
-    }
-
-    try {
-      const supabase = createClient();
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
-      if (authError || !user) {
-        alert("Not signed in.");
-        return;
-      }
-
-      const contactId = selectedUser.id;
-      const businessId = user.id;
-
-      // In this app, messages are stored with sender_id=contact and receiver_id=business
-      // for both directions (see dev insert + server webhook mapping).
-      const { error } = await supabase
-        .from("messages")
-        .delete()
-        .eq("sender_id", contactId)
-        .eq("receiver_id", businessId);
-
-      if (error) {
-        console.error("[dev] delete conversation:", error);
-        alert(`Could not delete conversation: ${error.message}`);
-        return;
-      }
-
-      // Also remove the contact row so it disappears from the conversation list.
-      // Never delete your own business row.
-      if (contactId !== businessId) {
-        const { error: userDeleteError } = await supabase
-          .from("contacts")
-          .delete()
-          .eq("owner_id", businessId)
-          .eq("phone", contactId);
-        if (userDeleteError) {
-          console.error("[dev] delete contact row:", userDeleteError);
-          alert(
-            `Messages deleted, but could not delete contact row: ${userDeleteError.message}`,
-          );
-        }
-      }
-
-      // Clear local UI immediately
-      onMessageDeleted?.("__clear_all__");
-      // Refresh list so last_message/unread updates
-      await onUsersUpdate?.();
-
-      // Close the conversation UI
-      if (isMobile && onBack) {
-        onBack();
-      } else if (!isMobile && onClose) {
-        onClose();
-      }
-    } catch (e) {
-      console.error("[dev] delete conversation unexpected:", e);
-      alert(e instanceof Error ? e.message : "Could not delete conversation.");
-    }
-  };
 
   // Handle template message sending
   const handleSendTemplate = async (templateName: string, templateData: WhatsAppTemplate, variables: {
@@ -1734,14 +1513,14 @@ export function ChatWindow({
     }
   };
 
-  const runDynamicAction = async () => {
+  const runDynamicAction = async (actionId?: string) => {
     if (!selectedUser || broadcastGroupName) return;
     if (runningAction) return;
 
     const statusId = selectedUser.status_id ?? null;
     const tagName = selectedUser.status_name ?? undefined;
-    const mappedAction = statusId ? mappedActionsByStatus.get(statusId) : undefined;
-    const actionId = mappedAction?.id || undefined;
+    const mappedActions = statusId ? mappedActionsByStatus.get(statusId) ?? [] : [];
+    const resolvedActionId = actionId || mappedActions[0]?.id;
 
     if (!statusId && !tagName) {
       alert("This contact has no tag/status to run an action for.");
@@ -1757,7 +1536,7 @@ export function ChatWindow({
           conversationId: selectedUser.id,
           statusId,
           tagName,
-          actionId,
+          actionId: resolvedActionId,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -2829,90 +2608,6 @@ export function ChatWindow({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {devComposeOpen && devComposeKind && isLocalhostDev && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="dev-compose-title"
-          onClick={() => {
-            setDevComposeOpen(false);
-            setDevComposeKind(null);
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-lg border bg-background p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2
-              id="dev-compose-title"
-              className="text-lg font-semibold mb-1"
-            >
-              Test message (localhost)
-            </h2>
-            <p className="text-xs text-muted-foreground mb-4">
-              Leave empty to use the default dev placeholder. Your text is
-              inserted as-is.
-            </p>
-            {(devComposeKind === "in" || devComposeKind === "both") && (
-              <div className="space-y-2 mb-4">
-                <Label htmlFor="dev-inbound-text">
-                  {devComposeKind === "both" ? "Inbound" : "Message text"}
-                </Label>
-                <Textarea
-                  id="dev-inbound-text"
-                  value={devTextInbound}
-                  onChange={(e) => setDevTextInbound(e.target.value)}
-                  placeholder="Inbound message content…"
-                  rows={4}
-                  className="font-mono text-sm"
-                />
-              </div>
-            )}
-            {(devComposeKind === "out" || devComposeKind === "both") && (
-              <div className="space-y-2 mb-6">
-                <Label htmlFor="dev-outbound-text">
-                  {devComposeKind === "both" ? "Outbound" : "Message text"}
-                </Label>
-                <Textarea
-                  id="dev-outbound-text"
-                  value={devTextOutbound}
-                  onChange={(e) => setDevTextOutbound(e.target.value)}
-                  placeholder="Outbound message content…"
-                  rows={4}
-                  className="font-mono text-sm"
-                />
-              </div>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setDevComposeOpen(false);
-                  setDevComposeKind(null);
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                onClick={() => void submitDevCompose()}
-                disabled={devInsertLoading}
-              >
-                {devInsertLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Inserting…
-                  </>
-                ) : (
-                  "Insert"
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
       {/* Chat Header — sticky on mobile so back / avatar / title stay visible while scrolling */}
       <div
         className={`flex shrink-0 items-center gap-3 border-b border-border ${
@@ -2994,10 +2689,12 @@ export function ChatWindow({
               (() => {
                 const statusId = selectedUser.status_id ?? null;
                 const hasTag = !!(selectedUser.status_id || selectedUser.status_name);
-                const mappedAction = statusId ? mappedActionsByStatus.get(statusId) : undefined;
-                const hasMapping = Boolean(mappedAction?.id);
+                const mappedActions = statusId ? mappedActionsByStatus.get(statusId) ?? [] : [];
+                const hasMapping = mappedActions.length > 0;
                 const disabled = runningAction || !hasTag || (statusId ? !hasMapping : true);
-                const actionLabel = mappedAction?.name?.trim() ? mappedAction.name.trim() : "action";
+                const singleActionLabel =
+                  mappedActions[0]?.name?.trim() ? mappedActions[0].name.trim() : "Action";
+                const hasManyActions = mappedActions.length > 1;
 
                 return (
               <div className="flex items-center gap-3">
@@ -3015,86 +2712,88 @@ export function ChatWindow({
                   className="cursor-pointer text-xs text-muted-foreground"
                   title="Auto-translate incoming and outgoing messages for this conversation"
                 >
-                  Auto translate
+                  <span className="inline-flex items-center gap-1">
+                    <Languages className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Auto translate</span>
+                  </span>
                 </Label>
                 {savingConversationAutoTranslate ? (
                   <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
                 ) : null}
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                onClick={() => void runDynamicAction()}
-                disabled={disabled}
-                title={
-                  !hasTag
-                    ? "No tag/status on this contact"
-                    : !hasMapping
-                      ? "No action mapping for this tag"
-                      : `Run ${actionLabel}`
-                }
-              >
-                {runningAction ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Running…
-                  </>
-                ) : (
-                  `Run ${actionLabel}`
-                )}
-              </Button>
+              {hasManyActions ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      disabled={disabled}
+                      title={
+                        !hasTag
+                          ? "No tag/status on this contact"
+                          : !hasMapping
+                            ? "No action mapping for this tag"
+                            : "Actions"
+                      }
+                    >
+                      {runningAction ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Running…
+                        </>
+                      ) : (
+                        <>
+                          <span className="hidden sm:inline">Actions</span>
+                          <ChevronDown className="h-4 w-4" />
+                        </>
+                      )}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuLabel className="hidden sm:block">Actions</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {mappedActions.map((action) => (
+                      <DropdownMenuItem
+                        key={action.id}
+                        onClick={() => void runDynamicAction(action.id)}
+                        disabled={runningAction}
+                      >
+                        {(action.name || "").trim() || "Action"}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => void runDynamicAction(mappedActions[0]?.id)}
+                  disabled={disabled}
+                  title={
+                    !hasTag
+                      ? "No tag/status on this contact"
+                      : !hasMapping
+                        ? "No action mapping for this tag"
+                        : singleActionLabel
+                  }
+                >
+                  {runningAction ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Running…
+                    </>
+                  ) : (
+                    singleActionLabel
+                  )}
+                </Button>
+              )}
               </div>
                 );
               })()
-            )}
-            {isLocalhostDev && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="h-8 shrink-0 gap-1 border-amber-500/50 px-2 text-xs text-amber-800 dark:text-amber-300"
-                    disabled={devInsertLoading}
-                    title="Insert test messages (localhost only)"
-                  >
-                    {devInsertLoading ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <FlaskConical className="h-3.5 w-3.5" />
-                    )}
-                    Dev
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuLabel>Test (localhost)</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => openDevCompose("in")}
-                  >
-                    Inbound
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => openDevCompose("out")}
-                  >
-                    Outbound
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => openDevCompose("both")}
-                  >
-                    Both
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={() => void handleDeleteConversation()}
-                  >
-                    Delete conversation
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             )}
           </>
         ) : null}
@@ -3273,22 +2972,6 @@ export function ChatWindow({
                         <div
                           className={`flex min-w-0 max-w-full items-start gap-1 ${isOwn ? "justify-end" : "justify-start"}`}
                         >
-                          {isLocalhostDev &&
-                            !message.id.startsWith("optimistic_") && (
-                              <button
-                                type="button"
-                                onClick={() => void handleDeleteTestMessage(message.id)}
-                                disabled={deletingMessageId === message.id}
-                                className="mt-1 shrink-0 rounded p-1.5 text-muted-foreground opacity-70 transition-opacity hover:bg-destructive/15 hover:text-destructive hover:opacity-100 disabled:opacity-40"
-                                title="Supprimer (mode test)"
-                              >
-                                {deletingMessageId === message.id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Trash2 className="h-4 w-4" />
-                                )}
-                              </button>
-                            )}
                           {showTranslateControl && isOwn && (
                             <button
                               type="button"
@@ -3447,46 +3130,47 @@ export function ChatWindow({
         )}
         <div className="p-4">
         <form onSubmit={handleSendMessage} className="flex gap-3 items-end">
-          {/* Hide media button in broadcast mode, show template button */}
-          {!broadcastGroupName && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowMediaUpload(true)}
-              className="p-2 hover:bg-muted rounded-full transition-colors"
-              title="Attach media"
-            >
-              <Paperclip className="h-5 w-5" />
-            </Button>
-          )}
-          {/* WhatsApp Cloud: Meta templates · Green API: saved messages → composer */}
-          <div className="flex shrink-0 items-center gap-0.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                messagingProvider === "green_api"
-                  ? setShowSavedMessagePicker(true)
-                  : setShowTemplateSelector(true)
-              }
-              className="p-2 hover:bg-muted rounded-full transition-colors"
-              title={
-                messagingProvider === "green_api"
-                  ? "Insert saved message"
-                  : "Send template"
-              }
-            >
-              <MessageSquare className="h-5 w-5" />
-            </Button>
-            {selectedUser && !broadcastGroupName && (
-              <div className="relative" ref={contactDataWrapRef}>
-                <ContactDataTriggerButton
-                  active={contactDataOpen}
-                  onClick={() => setContactDataOpen((o) => !o)}
-                  disabled={isLoading || sendingMedia || commitSendBusy}
-                />
+          {isMobile ? (
+            <div className="relative shrink-0" ref={contactDataWrapRef}>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="p-2 hover:bg-muted rounded-full transition-colors"
+                    disabled={isLoading || sendingMedia || commitSendBusy}
+                    title="Composer tools"
+                  >
+                    <div className="flex items-center gap-1">
+                      <Paperclip className="h-5 w-5" />
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </div>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-52">
+                  {!broadcastGroupName && (
+                    <DropdownMenuItem onClick={() => setShowMediaUpload(true)}>
+                      Attach media
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    onClick={() =>
+                      messagingProvider === "green_api"
+                        ? setShowSavedMessagePicker(true)
+                        : setShowTemplateSelector(true)
+                    }
+                  >
+                    {messagingProvider === "green_api" ? "Insert saved message" : "Send template"}
+                  </DropdownMenuItem>
+                  {selectedUser && !broadcastGroupName && (
+                    <DropdownMenuItem onClick={() => setContactDataOpen(true)}>
+                      Contact data
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {selectedUser && !broadcastGroupName && (
                 <ContactDataPopover
                   open={contactDataOpen}
                   onOpenChange={setContactDataOpen}
@@ -3499,9 +3183,67 @@ export function ChatWindow({
                     });
                   }}
                 />
+              )}
+            </div>
+          ) : (
+            <>
+              {/* Hide media button in broadcast mode, show template button */}
+              {!broadcastGroupName && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowMediaUpload(true)}
+                  className="p-2 hover:bg-muted rounded-full transition-colors"
+                  title="Attach media"
+                >
+                  <Paperclip className="h-5 w-5" />
+                </Button>
+              )}
+              {/* WhatsApp Cloud: Meta templates · Green API: saved messages → composer */}
+              <div className="flex shrink-0 items-center gap-0.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    messagingProvider === "green_api"
+                      ? setShowSavedMessagePicker(true)
+                      : setShowTemplateSelector(true)
+                  }
+                  className="p-2 hover:bg-muted rounded-full transition-colors"
+                  title={
+                    messagingProvider === "green_api"
+                      ? "Insert saved message"
+                      : "Send template"
+                  }
+                >
+                  <MessageSquare className="h-5 w-5" />
+                </Button>
+                {selectedUser && !broadcastGroupName && (
+                  <div className="relative" ref={contactDataWrapRef}>
+                    <ContactDataTriggerButton
+                      active={contactDataOpen}
+                      onClick={() => setContactDataOpen((o) => !o)}
+                      disabled={isLoading || sendingMedia || commitSendBusy}
+                    />
+                    <ContactDataPopover
+                      open={contactDataOpen}
+                      onOpenChange={setContactDataOpen}
+                      contactPhone={selectedUser.id}
+                      onAppendComposer={(chunk) => {
+                        setMessageInput((prev) => (prev + chunk).slice(0, 1000));
+                        requestAnimationFrame(() => {
+                          messageInputRef.current?.focus();
+                          adjustMessageInputHeight();
+                        });
+                      }}
+                    />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
           <div
             ref={composerEmojiWrapRef}
             className="relative min-w-0 flex-1"
