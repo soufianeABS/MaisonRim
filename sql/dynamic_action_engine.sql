@@ -20,6 +20,7 @@ create table if not exists public.api_actions (
   -- Link to contact_statuses when using "tags" (recommended).
   status_id uuid null references public.contact_statuses(id) on delete cascade,
   tag_name text not null default '',
+  action_name text not null default '',
   url text not null,
   method text not null default 'POST',
   payload_template jsonb not null default '{}'::jsonb,
@@ -34,10 +35,6 @@ create table if not exists public.api_actions (
 
 create index if not exists api_actions_owner_status_idx
   on public.api_actions (owner_id, status_id);
-
-create unique index if not exists api_actions_owner_status_unique
-  on public.api_actions (owner_id, status_id)
-  where status_id is not null;
 
 alter table public.api_actions enable row level security;
 

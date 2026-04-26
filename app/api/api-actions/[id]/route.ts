@@ -32,6 +32,7 @@ export async function PATCH(
   const update: Record<string, unknown> = {};
   if ("status_id" in b) update.status_id = typeof b.status_id === "string" ? b.status_id : null;
   if ("tag_name" in b) update.tag_name = typeof b.tag_name === "string" ? b.tag_name.trim().slice(0, 120) : "";
+  if ("action_name" in b) update.action_name = typeof b.action_name === "string" ? b.action_name.trim().slice(0, 120) : "";
   if ("url" in b) update.url = typeof b.url === "string" ? b.url.trim() : "";
   if ("method" in b) update.method = cleanMethod(b.method);
   if ("payload_template" in b) update.payload_template = b.payload_template ?? {};
@@ -49,7 +50,7 @@ export async function PATCH(
     .update({ ...update, updated_at: new Date().toISOString() })
     .eq("id", id)
     .eq("owner_id", user.id)
-    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy, created_at, updated_at")
+    .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy, created_at, updated_at")
     .maybeSingle();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

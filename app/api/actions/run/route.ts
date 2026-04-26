@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
   const conversationId = typeof b.conversationId === "string" ? b.conversationId : "";
   const tagName = typeof b.tagName === "string" ? b.tagName : undefined;
   const statusId = typeof b.statusId === "string" ? b.statusId : null;
+  const actionId = typeof b.actionId === "string" ? b.actionId : null;
 
   if (!conversationId) {
     return NextResponse.json({ error: "conversationId is required" }, { status: 400 });
@@ -74,12 +75,13 @@ export async function POST(request: NextRequest) {
       conversationId,
       tagName: tagName ?? null,
       statusId: statusId ?? null,
+      actionId: actionId ?? null,
       userId: user.id,
     });
   }
 
   try {
-    const result = await ActionRunner.run({ conversationId, tagName, statusId });
+    const result = await ActionRunner.run({ conversationId, tagName, statusId, actionId });
     if (debug) {
       console.log("[actions/run] response", previewJson(result));
     }

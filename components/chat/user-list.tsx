@@ -24,6 +24,8 @@ import {
   Loader2,
   Languages,
   Palette,
+  ArrowDownToLine,
+  ArrowUpFromLine,
 } from "lucide-react";
 import {
   useState,
@@ -52,6 +54,26 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+type TransferSectionKey =
+  | "savedMessages"
+  | "replyAgents"
+  | "themeColors"
+  | "translation"
+  | "imagePrompts"
+  | "statuses"
+  | "dynamicActions";
+
+const TRANSFER_SECTIONS: Array<{ key: TransferSectionKey; label: string }> = [
+  { key: "savedMessages", label: "Saved messages" },
+  { key: "replyAgents", label: "Reply Agents" },
+  { key: "themeColors", label: "Theme & colors" },
+  { key: "translation", label: "Translation" },
+  { key: "imagePrompts", label: "Image Prompts" },
+  { key: "statuses", label: "Statuses" },
+  { key: "dynamicActions", label: "Dynamic Actions" },
+];
 
 interface ChatUser {
   id: string;
@@ -175,6 +197,17 @@ export function UserList({
     | { ok: true; chatsProcessed: number; messagesUpserted: number; mediaStored: number }
     | { ok: false; error: string }
   >(null);
+  const [showImportExport, setShowImportExport] = useState(false);
+  const [transferTab, setTransferTab] = useState<"export" | "import">("export");
+  const [selectedExportSections, setSelectedExportSections] = useState<Set<TransferSectionKey>>(
+    () => new Set(TRANSFER_SECTIONS.map((s) => s.key)),
+  );
+  const [selectedImportSections, setSelectedImportSections] = useState<Set<TransferSectionKey>>(
+    new Set(),
+  );
+  const [importFileName, setImportFileName] = useState("");
+  const [importBundle, setImportBundle] = useState<unknown>(null);
+  const [transferBusy, setTransferBusy] = useState(false);
 
   /** Filter conversations by who sent the most recent message (requires last_message_sender). */
   const [lastReplyFilter, setLastReplyFilter] = useState<"all" | "client" | "me">("all");
@@ -553,6 +586,120 @@ export function UserList({
     }
   };
 
+  const toggleSection = (
+    setFn: Dispatch<SetStateAction<Set<TransferSectionKey>>>,
+    key: TransferSectionKey,
+  ) => {
+    setFn((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const handleExportConfig = async () => {
+    if (transferBusy) return;
+    if (selectedExportSections.size === 0) {
+      alert("Pick at least one section to export.");
+      return;
+    }
+    setTransferBusy(true);
+    try {
+      const res = await fetch("/api/account-transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "export",
+          sections: Array.from(selectedExportSections),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Export failed");
+      const bundle = data?.bundle;
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+        type: "application/json",
+      });
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `wachat-account-export-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setTransferBusy(false);
+    }
+  };
+
+  const handlePickImportFile = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      const root = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+      const sectionsRaw = root?.sections;
+      const available = new Set<TransferSectionKey>();
+      if (Array.isArray(sectionsRaw)) {
+        for (const s of sectionsRaw) {
+          if (typeof s === "string" && TRANSFER_SECTIONS.some((item) => item.key === s)) {
+            available.add(s as TransferSectionKey);
+          }
+        }
+      } else {
+        for (const item of TRANSFER_SECTIONS) available.add(item.key);
+      }
+      setImportBundle(parsed);
+      setImportFileName(file.name);
+      setSelectedImportSections(available);
+    } catch {
+      alert("Invalid JSON file.");
+      setImportBundle(null);
+      setImportFileName("");
+      setSelectedImportSections(new Set());
+    }
+  };
+
+  const handleImportConfig = async () => {
+    if (transferBusy) return;
+    if (!importBundle) {
+      alert("Choose a JSON file first.");
+      return;
+    }
+    if (selectedImportSections.size === 0) {
+      alert("Pick at least one section to import.");
+      return;
+    }
+    setTransferBusy(true);
+    try {
+      const res = await fetch("/api/account-transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "import",
+          file: importBundle,
+          sections: Array.from(selectedImportSections),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Import failed");
+      await onUsersUpdate?.();
+      alert("Import completed successfully.");
+      setShowImportExport(false);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setTransferBusy(false);
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.push("/");
@@ -796,6 +943,119 @@ export function UserList({
           </div>
         </div>
       )}
+      {showImportExport && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="import-export-title"
+          onClick={() => {
+            if (transferBusy) return;
+            setShowImportExport(false);
+          }}
+        >
+          <div
+            className="w-full max-w-2xl rounded-lg border bg-background p-6 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 id="import-export-title" className="text-lg font-semibold">
+                  Import / Export
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Move account configuration between accounts using one JSON file.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowImportExport(false)}
+                disabled={transferBusy}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <Tabs value={transferTab} onValueChange={(v) => setTransferTab(v === "import" ? "import" : "export")}>
+              <TabsList>
+                <TabsTrigger value="export">Export</TabsTrigger>
+                <TabsTrigger value="import">Import</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="export" className="space-y-4">
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">Choose what to export</div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {TRANSFER_SECTIONS.map((section) => (
+                      <label key={section.key} className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={selectedExportSections.has(section.key)}
+                          onChange={() => toggleSection(setSelectedExportSections, section.key)}
+                        />
+                        <span>{section.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="outline" onClick={() => setShowImportExport(false)} disabled={transferBusy}>
+                    Cancel
+                  </Button>
+                  <Button type="button" onClick={() => void handleExportConfig()} disabled={transferBusy}>
+                    <ArrowDownToLine className="h-4 w-4" />
+                    {transferBusy ? "Exporting..." : "Export JSON"}
+                  </Button>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="import" className="space-y-4">
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">Pick export file</div>
+                  <Input
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={(e) => void handlePickImportFile(e.target.files?.[0] ?? null)}
+                    disabled={transferBusy}
+                  />
+                  {importFileName ? (
+                    <p className="text-xs text-muted-foreground">Loaded: {importFileName}</p>
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">Choose what to import</div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {TRANSFER_SECTIONS.map((section) => {
+                      const enabled = importBundle !== null && selectedImportSections.has(section.key);
+                      return (
+                        <label key={section.key} className="flex items-center gap-2 rounded border px-3 py-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={selectedImportSections.has(section.key)}
+                            onChange={() => toggleSection(setSelectedImportSections, section.key)}
+                            disabled={importBundle === null}
+                          />
+                          <span className={enabled ? "" : "text-muted-foreground"}>{section.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="outline" onClick={() => setShowImportExport(false)} disabled={transferBusy}>
+                    Cancel
+                  </Button>
+                  <Button type="button" onClick={() => void handleImportConfig()} disabled={transferBusy || importBundle === null}>
+                    <ArrowUpFromLine className="h-4 w-4" />
+                    {transferBusy ? "Importing..." : "Import to this account"}
+                  </Button>
+                </div>
+              </TabsContent>
+            </Tabs>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="border-b border-border bg-chat-menu p-4 text-chat-menu-fg">
         <div className="flex items-center justify-between">
@@ -895,6 +1155,16 @@ export function UserList({
                     <Zap className="h-4 w-4" />
                     Dynamic Actions
                   </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setShowImportExport(true);
+                  }}
+                >
+                  <ArrowDownToLine className="h-4 w-4" />
+                  Import / Export
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

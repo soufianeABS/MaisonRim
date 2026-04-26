@@ -386,6 +386,7 @@ export function ChatWindow({
   broadcastGroupName,
   onMessageDeleted,
 }: ChatWindowProps) {
+  type MappedAction = { id: string; name: string };
   const [messageInput, setMessageInput] = useState("");
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [refreshingUrls, setRefreshingUrls] = useState<Set<string>>(new Set());
@@ -397,7 +398,7 @@ export function ChatWindow({
   const [loadingMedia, setLoadingMedia] = useState<Set<string>>(new Set());
   const [mediaUrlOverrides, setMediaUrlOverrides] = useState<Record<string, string>>({});
   const [runningAction, setRunningAction] = useState(false);
-  const [mappedStatusIds, setMappedStatusIds] = useState<Set<string>>(new Set());
+  const [mappedActionsByStatus, setMappedActionsByStatus] = useState<Map<string, MappedAction>>(new Map());
   const [audioDurations, setAudioDurations] = useState<{ [key: string]: number }>({});
   const [audioCurrentTime, setAudioCurrentTime] = useState<{ [key: string]: number }>({});
   const [showMediaUpload, setShowMediaUpload] = useState(false);
@@ -860,12 +861,18 @@ export function ChatWindow({
         const res = await fetch("/api/api-actions", { cache: "no-store" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) return;
-        const ids = new Set<string>();
-        const actions = Array.isArray(data?.actions) ? (data.actions as Array<{ status_id?: unknown }>) : [];
+        const byStatus = new Map<string, MappedAction>();
+        const actions = Array.isArray(data?.actions)
+          ? (data.actions as Array<{ id?: unknown; status_id?: unknown; action_name?: unknown }>)
+          : [];
         for (const a of actions) {
-          if (typeof a?.status_id === "string" && a.status_id) ids.add(a.status_id);
+          if (typeof a?.status_id !== "string" || !a.status_id) continue;
+          if (byStatus.has(a.status_id)) continue;
+          const actionId = typeof a.id === "string" ? a.id : "";
+          const actionName = typeof a.action_name === "string" ? a.action_name.trim() : "";
+          byStatus.set(a.status_id, { id: actionId, name: actionName });
         }
-        if (!cancelled) setMappedStatusIds(ids);
+        if (!cancelled) setMappedActionsByStatus(byStatus);
       } catch {
         // ignore
       }
@@ -1733,6 +1740,8 @@ export function ChatWindow({
 
     const statusId = selectedUser.status_id ?? null;
     const tagName = selectedUser.status_name ?? undefined;
+    const mappedAction = statusId ? mappedActionsByStatus.get(statusId) : undefined;
+    const actionId = mappedAction?.id || undefined;
 
     if (!statusId && !tagName) {
       alert("This contact has no tag/status to run an action for.");
@@ -1748,6 +1757,7 @@ export function ChatWindow({
           conversationId: selectedUser.id,
           statusId,
           tagName,
+          actionId,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -2984,8 +2994,10 @@ export function ChatWindow({
               (() => {
                 const statusId = selectedUser.status_id ?? null;
                 const hasTag = !!(selectedUser.status_id || selectedUser.status_name);
-                const hasMapping = statusId ? mappedStatusIds.has(statusId) : false;
+                const mappedAction = statusId ? mappedActionsByStatus.get(statusId) : undefined;
+                const hasMapping = Boolean(mappedAction?.id);
                 const disabled = runningAction || !hasTag || (statusId ? !hasMapping : true);
+                const actionLabel = mappedAction?.name?.trim() ? mappedAction.name.trim() : "action";
 
                 return (
               <div className="flex items-center gap-3">
@@ -3021,7 +3033,7 @@ export function ChatWindow({
                     ? "No tag/status on this contact"
                     : !hasMapping
                       ? "No action mapping for this tag"
-                      : "Run dynamic action for this tag"
+                      : `Run ${actionLabel}`
                 }
               >
                 {runningAction ? (
@@ -3030,7 +3042,7 @@ export function ChatWindow({
                     Running…
                   </>
                 ) : (
-                  "Run action"
+                  `Run ${actionLabel}`
                 )}
               </Button>
               </div>

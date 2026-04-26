@@ -19,7 +19,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("api_actions")
-    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy, created_at, updated_at")
+    .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy, created_at, updated_at")
     .eq("owner_id", user.id)
     .order("updated_at", { ascending: false });
 
@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
 
   const statusId = typeof b.status_id === "string" ? b.status_id : null;
   const tagName = typeof b.tag_name === "string" ? b.tag_name.trim().slice(0, 120) : "";
+  const actionName = typeof b.action_name === "string" ? b.action_name.trim().slice(0, 120) : "";
   const url = typeof b.url === "string" ? b.url.trim() : "";
   const method = cleanMethod(b.method);
   const useServerProxy = cleanUseServerProxy(b.use_server_proxy);
@@ -63,6 +64,7 @@ export async function POST(request: NextRequest) {
       owner_id: user.id,
       status_id: statusId,
       tag_name: tagName,
+      action_name: actionName,
       url,
       method,
       payload_template: payloadTemplate,
@@ -71,7 +73,7 @@ export async function POST(request: NextRequest) {
       auto_send_message: autoSendMessage,
       use_server_proxy: useServerProxy,
     })
-    .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy, created_at, updated_at")
+    .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy, created_at, updated_at")
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

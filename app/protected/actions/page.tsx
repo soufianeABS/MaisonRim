@@ -17,6 +17,7 @@ type ApiAction = {
   id: string;
   status_id: string | null;
   tag_name: string;
+  action_name?: string | null;
   url: string;
   method: "GET" | "POST";
   payload_template: unknown;
@@ -77,6 +78,8 @@ export default function ActionsPage() {
   const [saving, setSaving] = useState(false);
 
   const [selectedStatusId, setSelectedStatusId] = useState<string>("");
+  const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
+  const [actionName, setActionName] = useState("");
   const [url, setUrl] = useState("");
   const [method, setMethod] = useState<"GET" | "POST">("POST");
   const [payloadTemplate, setPayloadTemplate] = useState(pretty({ conversationId: "{{conversationId}}" }));
@@ -87,10 +90,13 @@ export default function ActionsPage() {
   const [autoSendMessage, setAutoSendMessage] = useState(false);
   const [useServerProxy, setUseServerProxy] = useState(false);
 
-  const actionByStatus = useMemo(() => {
-    const map = new Map<string, ApiAction>();
+  const actionsByStatus = useMemo(() => {
+    const map = new Map<string, ApiAction[]>();
     for (const a of actions) {
-      if (a.status_id) map.set(a.status_id, a);
+      if (!a.status_id) continue;
+      const existing = map.get(a.status_id) ?? [];
+      existing.push(a);
+      map.set(a.status_id, existing);
     }
     return map;
   }, [actions]);
@@ -117,15 +123,41 @@ export default function ActionsPage() {
     void load();
   }, [load]);
 
+  const resetEditorForStatus = useCallback((statusId: string) => {
+    setSelectedStatusId(statusId);
+    setSelectedActionId(null);
+    setActionName("");
+    setUrl("");
+    setMethod("POST");
+    setPayloadTemplate(pretty({ conversationId: "{{conversationId}}" }));
+    setResponseMapEntries([{ target: "metadata.remote_url", jsonPath: "$.url" }]);
+    setMessageTemplate("");
+    setAutoSendMessage(false);
+    setUseServerProxy(false);
+  }, []);
+
+  const pickActionForEdit = useCallback((action: ApiAction) => {
+    setSelectedStatusId(action.status_id ?? "");
+    setSelectedActionId(action.id);
+    setActionName(action.action_name ?? "");
+    setUrl(action.url ?? "");
+    setMethod(action.method ?? "POST");
+    setPayloadTemplate(pretty(action.payload_template));
+    setResponseMapEntries(responseMapToEntries(action.response_map));
+    setMessageTemplate(action.message_template ?? "");
+    setAutoSendMessage(Boolean(action.auto_send_message));
+    setUseServerProxy(Boolean(action.use_server_proxy));
+  }, []);
+
   const upsertForStatus = async () => {
     if (!selectedStatusId) throw new Error("Pick a tag");
-    const existing = actionByStatus.get(selectedStatusId) ?? null;
     const payload = parseJsonField(payloadTemplate, "payload_template");
     const map = entriesToResponseMap(responseMapEntries);
 
     const body = {
       status_id: selectedStatusId,
       tag_name: "",
+      action_name: actionName.trim(),
       url: url.trim(),
       method,
       payload_template: payload,
@@ -136,8 +168,8 @@ export default function ActionsPage() {
     };
     if (!body.url) throw new Error("URL is required");
 
-    const res = existing
-      ? await fetch(`/api/api-actions/${existing.id}`, {
+    const res = selectedActionId
+      ? await fetch(`/api/api-actions/${selectedActionId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -151,6 +183,7 @@ export default function ActionsPage() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Save failed");
     await load();
+    resetEditorForStatus(selectedStatusId);
   };
 
   const handleSave = async () => {
@@ -173,28 +206,13 @@ export default function ActionsPage() {
       return;
     }
     await load();
+    if (selectedActionId === actionId && selectedStatusId) {
+      resetEditorForStatus(selectedStatusId);
+    }
   };
 
   const handlePickStatus = (id: string) => {
-    setSelectedStatusId(id);
-    const existing = actionByStatus.get(id) ?? null;
-    if (existing) {
-      setUrl(existing.url ?? "");
-      setMethod(existing.method ?? "POST");
-      setPayloadTemplate(pretty(existing.payload_template));
-      setResponseMapEntries(responseMapToEntries(existing.response_map));
-      setMessageTemplate(existing.message_template ?? "");
-      setAutoSendMessage(Boolean(existing.auto_send_message));
-      setUseServerProxy(Boolean(existing.use_server_proxy));
-    } else {
-      setUrl("");
-      setMethod("POST");
-      setPayloadTemplate(pretty({ conversationId: "{{conversationId}}" }));
-      setResponseMapEntries([{ target: "metadata.remote_url", jsonPath: "$.url" }]);
-      setMessageTemplate("");
-      setAutoSendMessage(false);
-      setUseServerProxy(false);
-    }
+    resetEditorForStatus(id);
   };
 
   return (
@@ -238,7 +256,7 @@ export default function ActionsPage() {
                     <div className="flex gap-2 flex-wrap">
                       {statuses.map((s) => {
                         const active = selectedStatusId === s.id;
-                        const has = actionByStatus.has(s.id);
+                        const count = (actionsByStatus.get(s.id) ?? []).length;
                         return (
                           <Button
                             key={s.id}
@@ -250,7 +268,7 @@ export default function ActionsPage() {
                           >
                             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: s.color }} />
                             {s.name}
-                            {has ? <span className="ml-1 text-[10px] opacity-70">(mapped)</span> : null}
+                            {count > 0 ? <span className="ml-1 text-[10px] opacity-70">({count} actions)</span> : null}
                           </Button>
                         );
                       })}
@@ -268,8 +286,17 @@ export default function ActionsPage() {
                       </Button>
                       <Button type="button" className="ml-auto gap-2" onClick={() => void handleSave()} disabled={saving || !selectedStatusId}>
                         {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                        Save mapping
+                        {selectedActionId ? "Save action" : "Add action"}
                       </Button>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="act-name">Action name (optional)</Label>
+                      <Input
+                        id="act-name"
+                        value={actionName}
+                        onChange={(e) => setActionName(e.target.value)}
+                        placeholder="e.g. Enrich contact profile"
+                      />
                     </div>
                     <div className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-3">
                       <Checkbox
@@ -396,7 +423,7 @@ export default function ActionsPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Existing mappings</CardTitle>
-                <CardDescription>One mapping per tag.</CardDescription>
+                <CardDescription>Multiple actions per tag are supported.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {actions.length === 0 ? (
@@ -417,6 +444,11 @@ export default function ActionsPage() {
                               <span className="text-sm font-medium">{a.tag_name || "Tag"}</span>
                             )}
                             <span className="text-xs text-muted-foreground">{a.method}</span>
+                            {(a.action_name ?? "").trim() ? (
+                              <span className="text-[10px] rounded border border-border px-1.5 py-0.5 text-muted-foreground">
+                                {(a.action_name ?? "").trim()}
+                              </span>
+                            ) : null}
                             {a.use_server_proxy ? (
                               <span className="text-[10px] rounded border border-border px-1.5 py-0.5 text-muted-foreground">
                                 server proxy
@@ -425,7 +457,7 @@ export default function ActionsPage() {
                           </div>
                           <p className="text-xs text-muted-foreground truncate">{a.url}</p>
                         </div>
-                        <Button type="button" variant="outline" size="sm" onClick={() => handlePickStatus(a.status_id ?? "")} disabled={!a.status_id}>
+                        <Button type="button" variant="outline" size="sm" onClick={() => pickActionForEdit(a)}>
                           Edit
                         </Button>
                         <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => void handleDelete(a.id)}>

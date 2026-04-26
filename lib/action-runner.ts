@@ -19,6 +19,7 @@ type ApiActionRow = {
   owner_id: string;
   status_id: string | null;
   tag_name: string;
+  action_name?: string | null;
   url: string;
   method: HttpMethod;
   payload_template: unknown;
@@ -139,7 +140,7 @@ async function logActionError(params: {
 }
 
 export class ActionRunner {
-  static async run(params: { conversationId: string; tagName?: string; statusId?: string | null }) {
+  static async run(params: { conversationId: string; tagName?: string; statusId?: string | null; actionId?: string | null }) {
     const supabase = await createClient();
     const {
       data: { user },
@@ -153,6 +154,7 @@ export class ActionRunner {
     const contactId = params.conversationId;
     const statusId = params.statusId ?? null;
     const tagName = params.tagName ?? "";
+    const actionId = params.actionId ?? null;
 
     const { data: contact, error: contactError } = await supabase
       .from("contacts")
@@ -165,25 +167,36 @@ export class ActionRunner {
       throw new Error("Conversation not found");
     }
 
-    // Find action (prefer status_id, fallback to tag_name)
+    // Find action (prefer explicit actionId, then status_id, then tag_name)
     let action: ApiActionRow | null = null;
-    if (statusId) {
+    if (actionId) {
       const { data } = await supabase
         .from("api_actions")
-        .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
+        .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
         .eq("owner_id", user.id)
-        .eq("status_id", statusId)
+        .eq("id", actionId)
         .maybeSingle();
       action = (data as ApiActionRow | null) ?? null;
+    }
+    if (!action && statusId) {
+      const { data } = await supabase
+        .from("api_actions")
+        .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
+        .eq("owner_id", user.id)
+        .eq("status_id", statusId)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+      action = (data?.[0] as ApiActionRow | undefined) ?? null;
     }
     if (!action && tagName) {
       const { data } = await supabase
         .from("api_actions")
-        .select("id, owner_id, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
+        .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
         .eq("owner_id", user.id)
         .ilike("tag_name", tagName)
-        .maybeSingle();
-      action = (data as ApiActionRow | null) ?? null;
+        .order("updated_at", { ascending: false })
+        .limit(1);
+      action = (data?.[0] as ApiActionRow | undefined) ?? null;
     }
 
     if (!action) {
@@ -404,7 +417,14 @@ export class ActionRunner {
       }
     }
 
-    return { success: true, response: responseJson, renderedMessage, autoSent: shouldAutoSend };
+    return {
+      success: true,
+      response: responseJson,
+      renderedMessage,
+      autoSent: shouldAutoSend,
+      actionId: action.id,
+      actionName: (action.action_name ?? "").trim(),
+    };
   }
 }
 
