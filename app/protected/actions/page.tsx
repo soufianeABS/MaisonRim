@@ -372,7 +372,7 @@ export default function ActionsPage() {
                   />
                   <p className="text-xs text-muted-foreground">
                     Use <code>{"{{received.field}}"}</code> for API response values and <code>{"{{given.conversationId}}"}</code>, <code>{"{{given.tagName}}"}</code>,{" "}
-                    <code>{"{{given.payload.someKey}}"}</code> for request/context values. When action runs, this rendered text is pushed to the chat message box.
+                    <code>{"{{given.payload.someKey}}"}</code> for request/context values. When action runs, this rendered text is pushed to the chat message box unless auto-send is enabled.
                   </p>
                   <div className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-3">
                     <Checkbox

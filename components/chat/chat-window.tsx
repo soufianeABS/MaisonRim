@@ -1754,15 +1754,18 @@ export function ChatWindow({
       if (!res.ok) {
         throw new Error(data?.error || "Action failed");
       }
+      const autoSent = Boolean(data?.autoSent);
       const renderedMessage =
         data && typeof data.renderedMessage === "string" ? data.renderedMessage.trim() : "";
-      if (renderedMessage) {
+      if (renderedMessage && !autoSent) {
         setMessageInput(renderedMessage.slice(0, 1000));
       }
       // Response is stored in contacts.metadata by the server; show quick confirmation.
       console.log("Dynamic action executed:", data);
       alert(
-        renderedMessage
+        autoSent && renderedMessage
+          ? "Action executed. Response saved and message sent automatically."
+          : renderedMessage
           ? "Action executed. Response saved and message text prepared."
           : "Action executed. Response saved to conversation metadata.",
       );
