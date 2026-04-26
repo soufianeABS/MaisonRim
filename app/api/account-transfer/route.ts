@@ -72,6 +72,16 @@ function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+function asStringRecord(v: unknown): Record<string, string> {
+  const obj = asObject(v);
+  if (!obj) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value === "string") out[key] = value;
+  }
+  return out;
+}
+
 function asBool(v: unknown, fallback = false): boolean {
   return typeof v === "boolean" ? v : fallback;
 }
@@ -143,8 +153,8 @@ export async function POST(request: NextRequest) {
         const theme = asObject(settings.theme_custom_colors);
         payload.themeColors = theme
           ? {
-              light: asObject(theme.light) ?? {},
-              dark: asObject(theme.dark) ?? {},
+              light: asStringRecord(theme.light),
+              dark: asStringRecord(theme.dark),
             }
           : null;
       }
@@ -350,8 +360,8 @@ export async function POST(request: NextRequest) {
         id: user.id,
         theme_custom_colors: theme
           ? {
-              light: asObject(theme.light) ?? {},
-              dark: asObject(theme.dark) ?? {},
+              light: asStringRecord(theme.light),
+              dark: asStringRecord(theme.dark),
             }
           : null,
         updated_at: new Date().toISOString(),
