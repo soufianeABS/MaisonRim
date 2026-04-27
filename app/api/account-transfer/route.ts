@@ -60,7 +60,6 @@ type ExportBundle = {
       response_map: unknown;
       message_template: string;
       auto_send_message: boolean;
-      use_server_proxy: boolean;
     }>;
   };
 };
@@ -246,7 +245,7 @@ export async function POST(request: NextRequest) {
       if (sections.includes("dynamicActions")) {
         const { data: actions } = await supabase
           .from("api_actions")
-          .select("action_name, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
+          .select("action_name, status_id, tag_name, url, method, payload_template, response_map, message_template, auto_send_message")
           .eq("owner_id", user.id)
           .order("updated_at", { ascending: false });
         payload.dynamicActions = (actions ?? []).map((x) => {
@@ -261,7 +260,6 @@ export async function POST(request: NextRequest) {
             response_map: row.response_map ?? {},
             message_template: asString(row.message_template),
             auto_send_message: asBool(row.auto_send_message, false),
-            use_server_proxy: asBool(row.use_server_proxy, false),
           };
         });
       }
@@ -526,7 +524,6 @@ export async function POST(request: NextRequest) {
         response_map: row.response_map ?? {},
         message_template: asString(row.message_template),
         auto_send_message: asBool(row.auto_send_message, false),
-        use_server_proxy: asBool(row.use_server_proxy, false),
       }))
       .filter((row) => row.url && (row.status_id || row.tag_name));
     if (rows.length > 0) {

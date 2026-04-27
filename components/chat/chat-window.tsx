@@ -83,6 +83,18 @@ interface Message {
   isOptimistic?: boolean; // Flag for optimistic messages
 }
 
+type ActionMappingWarning = {
+  missingKeys: string[];
+  availableResponseKeys: string[];
+  messageTemplate: string;
+};
+
+type AppNotice = {
+  id: number;
+  variant: "success" | "error" | "info";
+  message: string;
+};
+
 function parseQuotedRefFromMedia(message: Message): {
   id: string | null;
   preview?: string;
@@ -409,6 +421,24 @@ export function ChatWindow({
   const [isDragging, setIsDragging] = useState(false);
   const [sendingMedia, setSendingMedia] = useState(false);
   const [showUserInfo, setShowUserInfo] = useState(false);
+  const [actionMappingWarning, setActionMappingWarning] = useState<ActionMappingWarning | null>(null);
+  const [appNotice, setAppNotice] = useState<AppNotice | null>(null);
+  const showAppNotice = useCallback((message: string, variant: AppNotice["variant"] = "info") => {
+    setAppNotice({
+      id: Date.now(),
+      variant,
+      message,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!appNotice) return;
+    const timeout = window.setTimeout(() => {
+      setAppNotice((current) => (current?.id === appNotice.id ? null : current));
+    }, 4200);
+    return () => window.clearTimeout(timeout);
+  }, [appNotice]);
+
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [showSavedMessagePicker, setShowSavedMessagePicker] = useState(false);
   const [contactDataOpen, setContactDataOpen] = useState(false);
@@ -596,7 +626,7 @@ export function ChatWindow({
         if (!res.ok) {
           const err = (data as { error?: string }).error || "Translation batch failed";
           if (!cancelled && conversationAutoTranslate) {
-            alert(`Auto-translate error: ${err}`);
+            showAppNotice(`Auto-translate error: ${err}`, "error");
           }
           return;
         }
@@ -639,12 +669,12 @@ export function ChatWindow({
         }
       } catch (e) {
         setConversationAutoTranslate(prev);
-        alert(e instanceof Error ? e.message : "Failed to update auto-translate setting");
+        showAppNotice(e instanceof Error ? e.message : "Failed to update auto-translate setting", "error");
       } finally {
         setSavingConversationAutoTranslate(false);
       }
     },
-    [selectedUser, broadcastGroupName, conversationAutoTranslate, savingConversationAutoTranslate],
+    [selectedUser, broadcastGroupName, conversationAutoTranslate, savingConversationAutoTranslate, showAppNotice],
   );
 
   useEffect(() => {
@@ -1384,7 +1414,7 @@ export function ChatWindow({
       const hardRuleWithoutChat = mode === "hard" && ruleText.length > 0;
 
       if (!hasConversation && !hardRuleWithoutChat) {
-        alert("No messages in this conversation yet.");
+        showAppNotice("No messages in this conversation yet.", "info");
         return;
       }
 
@@ -1430,7 +1460,7 @@ export function ChatWindow({
         setMessageInput(suggestion.slice(0, 1000));
       } catch (err) {
         console.error("Suggest reply:", err);
-        alert(err instanceof Error ? err.message : "Could not get a suggested reply.");
+        showAppNotice(err instanceof Error ? err.message : "Could not get a suggested reply.", "error");
       } finally {
         setSuggestingReply(false);
       }
@@ -1442,6 +1472,7 @@ export function ChatWindow({
       messages,
       resolvedStatusRuleMode,
       resolvedRuleText,
+      showAppNotice,
     ],
   );
 
@@ -1450,7 +1481,7 @@ export function ChatWindow({
     if ((!selectedUser && !broadcastGroupName) || sendingMedia) return;
     
     if (broadcastGroupName) {
-      alert('Media upload to broadcast groups is not yet supported. Please send text messages only.');
+      showAppNotice("Media upload to broadcast groups is not yet supported. Please send text messages only.", "info");
       return;
     }
 
@@ -1488,12 +1519,12 @@ export function ChatWindow({
       }
       
       if (result.failureCount > 0) {
-        alert(`Failed to send ${result.failureCount} files. Please try again.`);
+        showAppNotice(`Failed to send ${result.failureCount} files. Please try again.`, "error");
       }
 
     } catch (error) {
       console.error('Error sending media:', error);
-      alert(`Failed to send media: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      showAppNotice(`Failed to send media: ${error instanceof Error ? error.message : "Unknown error"}`, "error");
     } finally {
       setSendingMedia(false);
     }
@@ -1527,7 +1558,7 @@ export function ChatWindow({
     const resolvedActionId = actionId || mappedActions[0]?.id;
 
     if (!statusId && !tagName) {
-      alert("This contact has no tag/status to run an action for.");
+      showAppNotice("This contact has no tag/status to run an action for.", "info");
       return;
     }
 
@@ -1551,22 +1582,51 @@ export function ChatWindow({
       const autoSent = Boolean(data?.autoSent);
       const renderedMessage =
         data && typeof data.renderedMessage === "string" ? data.renderedMessage.trim() : "";
+      const messageTemplate = data && typeof data.messageTemplate === "string" ? data.messageTemplate : "";
+      const mappingUsed = Array.isArray(data?.mappingUsed) ? data.mappingUsed : [];
+
+      const missingKeys = mappingUsed
+        .filter(
+          (entry: unknown) =>
+            !!entry &&
+            typeof entry === "object" &&
+            typeof (entry as { target?: unknown }).target === "string" &&
+            ((entry as { value?: unknown }).value === null || (entry as { value?: unknown }).value === undefined),
+        )
+        .map((entry: unknown) => String((entry as { target: string }).target));
+
+      const availableResponseKeys =
+        data && data.response && typeof data.response === "object" && !Array.isArray(data.response)
+          ? Object.keys(data.response as Record<string, unknown>)
+          : [];
+
+      if (missingKeys.length > 0) {
+        setActionMappingWarning({
+          missingKeys: Array.from(new Set(missingKeys)),
+          availableResponseKeys,
+          messageTemplate,
+        });
+      } else {
+        setActionMappingWarning(null);
+      }
+
       if (renderedMessage && !autoSent) {
         setMessageInput(renderedMessage.slice(0, 1000));
       }
       // Response is stored in contacts.metadata by the server; show quick confirmation.
       console.log("Dynamic action executed:", data);
-      alert(
+      showAppNotice(
         autoSent && renderedMessage
           ? "Action executed. Response saved and message sent automatically."
           : renderedMessage
           ? "Action executed. Response saved and message text prepared."
           : "Action executed. Response saved to conversation metadata.",
+        "success",
       );
       await onUsersUpdate?.();
     } catch (e) {
       console.error("Run action:", e);
-      alert(e instanceof Error ? e.message : "Action failed");
+      showAppNotice(e instanceof Error ? e.message : "Action failed", "error");
     } finally {
       setRunningAction(false);
       onConversationActionActivity?.(targetContactId, false);
@@ -1714,7 +1774,7 @@ export function ChatWindow({
         }
       } catch (fallbackError) {
         console.error('Fallback download also failed:', fallbackError);
-        alert('Unable to download file. Please try again or contact support.');
+        showAppNotice("Unable to download file. Please try again or contact support.", "error");
       }
     }
   };
@@ -1867,12 +1927,12 @@ export function ChatWindow({
         }
       } catch (e) {
         console.error(e);
-        alert(e instanceof Error ? e.message : "Translation failed");
+        showAppNotice(e instanceof Error ? e.message : "Translation failed", "error");
       } finally {
         setTranslationLoadingId(null);
       }
     },
-    [translationTargetLang, translationUiEnabled, translationByMessageId],
+    [translationTargetLang, translationUiEnabled, translationByMessageId, showAppNotice],
   );
 
   const getOriginalAndTranslatedText = (message: Message): {
@@ -3340,6 +3400,77 @@ export function ChatWindow({
             <p className="text-gray-500 dark:text-gray-400 text-center">
               Release to upload and send media
             </p>
+          </div>
+        </div>
+      )}
+
+      {actionMappingWarning && (
+        <div className="fixed bottom-4 right-4 z-[70] w-[min(92vw,460px)] rounded-2xl border border-amber-500/40 bg-background/95 p-4 shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-background/85">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-amber-500">Mapping key not found</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Some template placeholders could not be resolved from the action response.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setActionMappingWarning(null)}
+              title="Close warning"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+
+          <div className="mt-3 space-y-2 text-xs">
+            <p>
+              <span className="font-medium text-foreground">Missing keys:</span>{" "}
+              <code>{actionMappingWarning.missingKeys.join(", ")}</code>
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Available response keys:</span>{" "}
+              <code>{actionMappingWarning.availableResponseKeys.join(", ") || "(none)"}</code>
+            </p>
+            <div className="rounded-md border border-border/60 bg-muted/40 p-2">
+              <p className="mb-1 font-medium text-foreground">Template used</p>
+              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+                {actionMappingWarning.messageTemplate || "(empty)"}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {appNotice && (
+        <div className="fixed bottom-4 left-4 z-[70] w-[min(92vw,420px)] rounded-2xl border bg-background/95 p-4 shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-background/85">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p
+                className={`text-sm font-semibold ${
+                  appNotice.variant === "success"
+                    ? "text-emerald-500"
+                    : appNotice.variant === "error"
+                    ? "text-red-500"
+                    : "text-sky-500"
+                }`}
+              >
+                {appNotice.variant === "success" ? "Success" : appNotice.variant === "error" ? "Error" : "Notice"}
+              </p>
+              <p className="mt-1 text-sm text-foreground">{appNotice.message}</p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setAppNotice(null)}
+              title="Close notice"
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </div>
         </div>
       )}

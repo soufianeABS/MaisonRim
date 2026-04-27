@@ -2,7 +2,6 @@ import { JSONPath } from "jsonpath-plus";
 
 import { createClient } from "@/lib/supabase/server";
 import { sendTextMessage } from "@/lib/send-text-message";
-import { fetchWithServerProxy, isLikelyCloudflareChallenge } from "@/lib/server-proxy-fetch";
 
 type HttpMethod = "GET" | "POST";
 
@@ -26,14 +25,18 @@ type ApiActionRow = {
   response_map: unknown;
   message_template?: string | null;
   auto_send_message?: boolean | null;
-  /** When absent (old row), treated as false. */
-  use_server_proxy?: boolean | null;
 };
 
 type ContactRow = {
   phone: string;
   owner_id: string;
   metadata: unknown;
+};
+
+type MappingTrace = {
+  target: string;
+  source: string;
+  value: unknown;
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -57,13 +60,25 @@ function deepReplacePlaceholders(input: unknown, ctx: Record<string, string>): u
 }
 
 function safeJSONPathValue(response: unknown, path: string): unknown {
-  try {
-    const out: unknown = JSONPath({ path, json: response as JsonValue });
-    const arr = Array.isArray(out) ? out : [out];
-    return arr.length ? arr[0] : null;
-  } catch {
-    return null;
+  const rawPath = path.trim();
+  if (!rawPath) return null;
+
+  const candidates = rawPath.startsWith("$")
+    ? [rawPath]
+    : [`$.${rawPath}`, `$[0].${rawPath}`, rawPath];
+
+  for (const candidate of candidates) {
+    try {
+      const out: unknown = JSONPath({ path: candidate, json: response as JsonValue });
+      const arr = Array.isArray(out) ? out : [out];
+      if (arr.length > 0 && arr[0] !== undefined) {
+        return arr[0];
+      }
+    } catch {
+      // try next candidate
+    }
   }
+  return null;
 }
 
 function setMetadataPath(metadata: Record<string, unknown>, path: string, value: unknown) {
@@ -101,17 +116,45 @@ function stringifyTemplateValue(value: unknown): string {
   }
 }
 
+function stringifyContactDataValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
 function renderMessageTemplate(params: {
   template: string;
   given: Record<string, unknown>;
   received: unknown;
+  mapped: Record<string, unknown>;
 }): string {
-  return params.template.replace(/\{\{\s*(given|received)(?:\.([a-zA-Z0-9_.-]+))?\s*\}\}/g, (_m, source, path) => {
-    const keyPath = typeof path === "string" ? path : "";
-    if (source === "given") {
-      return stringifyTemplateValue(readPath(params.given, keyPath));
+  return params.template.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_m, expression) => {
+    const expr = String(expression ?? "").trim();
+    if (!expr) return "";
+
+    if (expr === "given") return stringifyTemplateValue(params.given);
+    if (expr === "received") return stringifyTemplateValue(params.received);
+    if (expr.startsWith("given.")) return stringifyTemplateValue(readPath(params.given, expr.slice("given.".length)));
+    if (expr.startsWith("received.")) return stringifyTemplateValue(readPath(params.received, expr.slice("received.".length)));
+
+    // First priority: exact response_map key entered by the user.
+    if (Object.prototype.hasOwnProperty.call(params.mapped, expr)) {
+      return stringifyTemplateValue(params.mapped[expr]);
     }
-    return stringifyTemplateValue(readPath(params.received, keyPath));
+
+    // Bare placeholders are treated as API response paths for simple templates.
+    const direct = readPath(params.received, expr);
+    if (direct !== undefined && direct !== null) return stringifyTemplateValue(direct);
+
+    const byJsonPath = safeJSONPathValue(params.received, expr);
+    if (byJsonPath !== undefined && byJsonPath !== null) return stringifyTemplateValue(byJsonPath);
+
+    return "";
   });
 }
 
@@ -172,7 +215,7 @@ export class ActionRunner {
     if (actionId) {
       const { data } = await supabase
         .from("api_actions")
-        .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
+        .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message")
         .eq("owner_id", user.id)
         .eq("id", actionId)
         .maybeSingle();
@@ -181,7 +224,7 @@ export class ActionRunner {
     if (!action && statusId) {
       const { data } = await supabase
         .from("api_actions")
-        .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
+        .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message")
         .eq("owner_id", user.id)
         .eq("status_id", statusId)
         .order("updated_at", { ascending: false })
@@ -191,7 +234,7 @@ export class ActionRunner {
     if (!action && tagName) {
       const { data } = await supabase
         .from("api_actions")
-        .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message, use_server_proxy")
+        .select("id, owner_id, status_id, tag_name, action_name, url, method, payload_template, response_map, message_template, auto_send_message")
         .eq("owner_id", user.id)
         .ilike("tag_name", tagName)
         .order("updated_at", { ascending: false })
@@ -226,7 +269,7 @@ export class ActionRunner {
     }
 
     const payload = deepReplacePlaceholders(action.payload_template, ctx);
-    const useProxy = action.use_server_proxy === true;
+    let mappingTrace: MappingTrace[] = [];
 
     let responseJson: unknown;
     try {
@@ -246,20 +289,10 @@ export class ActionRunner {
           }
           finalUrl = u.toString();
           requestPayload = payload;
-          if (useProxy) {
-            return await fetchWithServerProxy({ url: finalUrl, method: "GET" });
-          }
           return await fetch(finalUrl, { method: "GET" });
         }
         finalUrl = action.url;
         requestPayload = payload ?? {};
-        if (useProxy) {
-          return await fetchWithServerProxy({
-            url: action.url,
-            method: "POST",
-            jsonBody: payload ?? {},
-          });
-        }
         return await fetch(action.url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -268,28 +301,6 @@ export class ActionRunner {
       })();
 
       const text = await res.text();
-      // Do not treat our own /api/iptv (Puppeteer) response as a Cloudflare challenge page.
-      const isIptvStealthRoute = (() => {
-        try {
-          const u = new URL(finalUrl);
-          return u.pathname === "/api/iptv" || u.pathname.endsWith("/api/iptv");
-        } catch {
-          return false;
-        }
-      })();
-      if (useProxy && !isIptvStealthRoute && isLikelyCloudflareChallenge(text)) {
-        await logActionError({
-          ownerId: user.id,
-          contactId,
-          actionId: action.id,
-          tagName: tagName || action.tag_name,
-          message: "Cloudflare challenge page returned (server proxy)",
-          details: { url: action.url, finalUrl, method },
-        });
-        throw new Error(
-          "Cloudflare block detected. Server-side browser headers were not enough; try a different endpoint or tooling.",
-        );
-      }
       try {
         responseJson = text ? JSON.parse(text) : null;
       } catch {
@@ -309,6 +320,7 @@ export class ActionRunner {
             method,
             payload: requestPayload,
             response: responseJson,
+            mappingUsed: mappingTrace,
             status: res.status,
           },
         });
@@ -328,6 +340,7 @@ export class ActionRunner {
           url: action.url,
           method: action.method,
           payload,
+          mappingUsed: mappingTrace,
           error: msg,
         },
       });
@@ -346,22 +359,67 @@ export class ActionRunner {
     const update: Record<string, unknown> = {
       metadata: currentMeta,
     };
+    const contactDataRows: Array<{
+      owner_id: string;
+      contact_phone: string;
+      field_key: string;
+      field_value: string;
+    }> = [];
+    const mappedTemplateValues: Record<string, unknown> = {};
 
     const allowedContactColumns = new Set(["custom_name", "whatsapp_name", "avatar_url"]);
     if (isRecord(action.response_map)) {
       for (const [target, jsonPath] of Object.entries(action.response_map)) {
         if (typeof jsonPath !== "string" || !jsonPath.trim()) continue;
-        const val = safeJSONPathValue(responseJson, jsonPath);
-        if (target.startsWith("metadata.")) {
-          setMetadataPath(currentMeta, target.slice("metadata.".length), val);
-        } else if (allowedContactColumns.has(target)) {
-          update[target] = val;
+        const templateKey = target.trim();
+        if (!templateKey) continue;
+        const sourceKey = jsonPath.trim();
+        const val = safeJSONPathValue(responseJson, sourceKey);
+        mappingTrace.push({ target: templateKey, source: sourceKey, value: val });
+        mappedTemplateValues[templateKey] = val;
+        const normalizedKey = (templateKey.startsWith("metadata.") ? templateKey.slice("metadata.".length) : templateKey).trim();
+        if (normalizedKey && normalizedKey !== templateKey) {
+          mappedTemplateValues[normalizedKey] = val;
+        }
+        const asText = stringifyContactDataValue(val).trim();
+        if (normalizedKey && asText) {
+          contactDataRows.push({
+            owner_id: user.id,
+            contact_phone: contactId,
+            field_key: normalizedKey.slice(0, 200),
+            field_value: asText.slice(0, 8000),
+          });
+        }
+        if (templateKey.startsWith("metadata.")) {
+          setMetadataPath(currentMeta, templateKey.slice("metadata.".length), val);
+        } else if (allowedContactColumns.has(templateKey)) {
+          update[templateKey] = val;
         } else {
           // Unknown target -> store under metadata.extracted.<target>
-          setMetadataPath(currentMeta, `extracted.${target}`, val);
+          setMetadataPath(currentMeta, `extracted.${templateKey}`, val);
         }
       }
       update.metadata = currentMeta;
+    }
+
+    if (contactDataRows.length > 0) {
+      const dedupedByKey = new Map<string, (typeof contactDataRows)[number]>();
+      for (const row of contactDataRows) dedupedByKey.set(row.field_key, row);
+      const { error: contactDataError } = await supabase
+        .from("contact_data_entries")
+        .upsert([...dedupedByKey.values()], {
+          onConflict: "owner_id,contact_phone,field_key",
+        });
+      if (contactDataError) {
+        await logActionError({
+          ownerId: user.id,
+          contactId,
+          actionId: action.id,
+          tagName: tagName || action.tag_name,
+          message: "Failed to persist response_map into contact data",
+          details: { error: contactDataError.message, mappingUsed: mappingTrace },
+        });
+      }
     }
 
     const { error: updateError } = await supabase
@@ -377,7 +435,7 @@ export class ActionRunner {
         actionId: action.id,
         tagName: tagName || action.tag_name,
         message: "Failed to persist action result",
-        details: { updateError: updateError.message },
+        details: { updateError: updateError.message, mappingUsed: mappingTrace },
       });
       throw new Error("Failed to save action result");
     }
@@ -393,6 +451,7 @@ export class ActionRunner {
             url: action.url,
           },
           received: responseJson,
+          mapped: mappedTemplateValues,
         })
       : "";
 
@@ -420,8 +479,10 @@ export class ActionRunner {
     return {
       success: true,
       response: responseJson,
+      messageTemplate,
       renderedMessage,
       autoSent: shouldAutoSend,
+      mappingUsed: mappingTrace,
       actionId: action.id,
       actionName: (action.action_name ?? "").trim(),
     };

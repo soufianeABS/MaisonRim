@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Copy, Loader2, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,7 +24,6 @@ type ApiAction = {
   response_map: unknown;
   message_template?: string | null;
   auto_send_message?: boolean | null;
-  use_server_proxy?: boolean;
   updated_at: string;
 };
 
@@ -32,6 +31,13 @@ type ResponseMapEntry = {
   target: string;
   jsonPath: string;
 };
+
+function normalizeJsonPathForDisplay(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed.startsWith("$[0].")) return trimmed.slice(5);
+  if (trimmed.startsWith("$.")) return trimmed.slice(2);
+  return trimmed;
+}
 
 function pretty(v: unknown): string {
   try {
@@ -56,7 +62,7 @@ function responseMapToEntries(value: unknown): ResponseMapEntry[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   return Object.entries(value as Record<string, unknown>).map(([target, jsonPath]) => ({
     target,
-    jsonPath: typeof jsonPath === "string" ? jsonPath : String(jsonPath ?? ""),
+    jsonPath: typeof jsonPath === "string" ? normalizeJsonPathForDisplay(jsonPath) : String(jsonPath ?? ""),
   }));
 }
 
@@ -84,11 +90,10 @@ export default function ActionsPage() {
   const [method, setMethod] = useState<"GET" | "POST">("POST");
   const [payloadTemplate, setPayloadTemplate] = useState(pretty({ conversationId: "{{conversationId}}" }));
   const [responseMapEntries, setResponseMapEntries] = useState<ResponseMapEntry[]>([
-    { target: "metadata.remote_url", jsonPath: "$.url" },
+    { target: "remote_url", jsonPath: "url" },
   ]);
   const [messageTemplate, setMessageTemplate] = useState("");
   const [autoSendMessage, setAutoSendMessage] = useState(false);
-  const [useServerProxy, setUseServerProxy] = useState(false);
 
   const actionsByStatus = useMemo(() => {
     const map = new Map<string, ApiAction[]>();
@@ -130,10 +135,9 @@ export default function ActionsPage() {
     setUrl("");
     setMethod("POST");
     setPayloadTemplate(pretty({ conversationId: "{{conversationId}}" }));
-    setResponseMapEntries([{ target: "metadata.remote_url", jsonPath: "$.url" }]);
+    setResponseMapEntries([{ target: "remote_url", jsonPath: "url" }]);
     setMessageTemplate("");
     setAutoSendMessage(false);
-    setUseServerProxy(false);
   }, []);
 
   const pickActionForEdit = useCallback((action: ApiAction) => {
@@ -146,10 +150,22 @@ export default function ActionsPage() {
     setResponseMapEntries(responseMapToEntries(action.response_map));
     setMessageTemplate(action.message_template ?? "");
     setAutoSendMessage(Boolean(action.auto_send_message));
-    setUseServerProxy(Boolean(action.use_server_proxy));
   }, []);
 
-  const upsertForStatus = async () => {
+  const duplicateActionToEditor = useCallback((action: ApiAction) => {
+    setSelectedStatusId(action.status_id ?? "");
+    setSelectedActionId(null);
+    const baseName = (action.action_name ?? "").trim();
+    setActionName(baseName ? `${baseName} (copy)` : "");
+    setUrl(action.url ?? "");
+    setMethod(action.method ?? "POST");
+    setPayloadTemplate(pretty(action.payload_template));
+    setResponseMapEntries(responseMapToEntries(action.response_map));
+    setMessageTemplate(action.message_template ?? "");
+    setAutoSendMessage(Boolean(action.auto_send_message));
+  }, []);
+
+  const upsertForStatus = async (): Promise<ApiAction> => {
     if (!selectedStatusId) throw new Error("Pick a tag");
     const payload = parseJsonField(payloadTemplate, "payload_template");
     const map = entriesToResponseMap(responseMapEntries);
@@ -164,7 +180,6 @@ export default function ActionsPage() {
       response_map: map,
       message_template: messageTemplate,
       auto_send_message: autoSendMessage,
-      use_server_proxy: useServerProxy,
     };
     if (!body.url) throw new Error("URL is required");
 
@@ -182,14 +197,16 @@ export default function ActionsPage() {
 
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Save failed");
-    await load();
-    resetEditorForStatus(selectedStatusId);
+    return data.action as ApiAction;
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await upsertForStatus();
+      const saved = await upsertForStatus();
+      await load();
+      // Keep the same action visible in the editor after save.
+      pickActionForEdit(saved);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -298,22 +315,6 @@ export default function ActionsPage() {
                         placeholder="e.g. Enrich contact profile"
                       />
                     </div>
-                    <div className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-3">
-                      <Checkbox
-                        id="act-proxy"
-                        checked={useServerProxy}
-                        onCheckedChange={(v) => setUseServerProxy(v === true)}
-                      />
-                      <div className="space-y-1">
-                        <Label htmlFor="act-proxy" className="cursor-pointer font-medium leading-none">
-                          Fetch via server proxy (browser-like headers)
-                        </Label>
-                        <p className="text-xs text-muted-foreground">
-                          Runs the request from this app with browser User-Agent and related headers. Useful when the API blocks non-browser clients.
-                          Does not bypass interactive Cloudflare challenges.
-                        </p>
-                      </div>
-                    </div>
                   </div>
                 </div>
 
@@ -346,7 +347,7 @@ export default function ActionsPage() {
                                   prev.map((item, i) => (i === index ? { ...item, target: e.target.value } : item)),
                                 )
                               }
-                              placeholder="target field (e.g. metadata.remote_url)"
+                              placeholder="Field name (use in template, e.g. username)"
                             />
                             <Input
                               value={entry.jsonPath}
@@ -355,7 +356,7 @@ export default function ActionsPage() {
                                   prev.map((item, i) => (i === index ? { ...item, jsonPath: e.target.value } : item)),
                                 )
                               }
-                              placeholder="JSONPath (e.g. $.url)"
+                              placeholder="Received path (e.g. value.value)"
                             />
                             <Button
                               type="button"
@@ -384,7 +385,7 @@ export default function ActionsPage() {
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Keys can be <code>metadata.foo</code> or a contact column: <code>custom_name</code>, <code>whatsapp_name</code>, <code>avatar_url</code>.
+                      Left name is your key (used in template like <code>{"{{username}}"}</code> and saved to contact data). Right side is API response path (e.g. <code>value.value</code>).
                     </p>
                   </div>
                 </div>
@@ -395,11 +396,12 @@ export default function ActionsPage() {
                     value={messageTemplate}
                     onChange={(e) => setMessageTemplate(e.target.value)}
                     rows={4}
-                    placeholder="Hi, URL: {{received.url}} | User: {{received.username}}"
+                    placeholder="Hi, URL: {{url}} | User: {{username}}"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Use <code>{"{{received.field}}"}</code> for API response values and <code>{"{{given.conversationId}}"}</code>, <code>{"{{given.tagName}}"}</code>,{" "}
-                    <code>{"{{given.payload.someKey}}"}</code> for request/context values. When action runs, this rendered text is pushed to the chat message box unless auto-send is enabled.
+                    Use <code>{"{{fieldName}}"}</code> with your left mapping key (example: <code>{"{{username}}"}</code>). You can still use <code>{"{{received.field}}"}</code>. For request/context values use{" "}
+                    <code>{"{{given.conversationId}}"}</code>, <code>{"{{given.tagName}}"}</code>, <code>{"{{given.payload.someKey}}"}</code>. When action runs, this rendered text is pushed to the
+                    chat message box unless auto-send is enabled.
                   </p>
                   <div className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-3">
                     <Checkbox
@@ -449,16 +451,15 @@ export default function ActionsPage() {
                                 {(a.action_name ?? "").trim()}
                               </span>
                             ) : null}
-                            {a.use_server_proxy ? (
-                              <span className="text-[10px] rounded border border-border px-1.5 py-0.5 text-muted-foreground">
-                                server proxy
-                              </span>
-                            ) : null}
                           </div>
                           <p className="text-xs text-muted-foreground truncate">{a.url}</p>
                         </div>
                         <Button type="button" variant="outline" size="sm" onClick={() => pickActionForEdit(a)}>
                           Edit
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => duplicateActionToEditor(a)}>
+                          <Copy className="h-3.5 w-3.5" />
+                          Duplicate
                         </Button>
                         <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => void handleDelete(a.id)}>
                           <Trash2 className="h-4 w-4" />

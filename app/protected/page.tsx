@@ -53,6 +53,14 @@ interface MessagePayload {
   is_read?: boolean | null;
 }
 
+const CONVERSATION_ACTION_COUNTS_STORAGE_KEY = "conversation_action_counts_v1";
+const CONVERSATION_ACTION_STALE_MS = 2 * 60 * 1000;
+
+type ConversationActionPersisted = {
+  count: number;
+  updatedAt: number;
+};
+
 /**
  * Supabase Realtime often delivers JSON/JSONB columns as parsed objects; RPC SELECT
  * usually returns strings. Normalize so the chat UI always gets a JSON string for media_data.
@@ -165,6 +173,78 @@ export default function ChatPage() {
   useEffect(() => {
     usersRef.current = users;
   }, [users]);
+
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(CONVERSATION_ACTION_COUNTS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, ConversationActionPersisted>;
+      const now = Date.now();
+      const restored: Record<string, number> = {};
+      for (const [contactId, value] of Object.entries(parsed)) {
+        if (!value || typeof value.count !== "number" || typeof value.updatedAt !== "number") continue;
+        if (value.count <= 0) continue;
+        if (now - value.updatedAt > CONVERSATION_ACTION_STALE_MS) continue;
+        restored[contactId] = value.count;
+      }
+      if (Object.keys(restored).length > 0) {
+        setConversationActionCounts(restored);
+      }
+    } catch {
+      // ignore malformed persisted UI state
+    }
+  }, []);
+
+  useEffect(() => {
+    const now = Date.now();
+    const toPersist: Record<string, ConversationActionPersisted> = {};
+    for (const [contactId, count] of Object.entries(conversationActionCounts)) {
+      if (count > 0) {
+        toPersist[contactId] = { count, updatedAt: now };
+      }
+    }
+    if (Object.keys(toPersist).length === 0) {
+      window.sessionStorage.removeItem(CONVERSATION_ACTION_COUNTS_STORAGE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(CONVERSATION_ACTION_COUNTS_STORAGE_KEY, JSON.stringify(toPersist));
+  }, [conversationActionCounts]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      const now = Date.now();
+      setConversationActionCounts((prev) => {
+        let changed = false;
+        const next: Record<string, number> = {};
+        for (const [contactId, count] of Object.entries(prev)) {
+          if (count <= 0) {
+            changed = true;
+            continue;
+          }
+          const raw = window.sessionStorage.getItem(CONVERSATION_ACTION_COUNTS_STORAGE_KEY);
+          let updatedAt = now;
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw) as Record<string, ConversationActionPersisted>;
+              const saved = parsed[contactId];
+              if (saved && typeof saved.updatedAt === "number") {
+                updatedAt = saved.updatedAt;
+              }
+            } catch {
+              // ignore parse errors
+            }
+          }
+          if (now - updatedAt > CONVERSATION_ACTION_STALE_MS) {
+            changed = true;
+            continue;
+          }
+          next[contactId] = count;
+        }
+        return changed ? next : prev;
+      });
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     selectedUserRef.current = selectedUser;
