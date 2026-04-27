@@ -506,7 +506,7 @@ export default function ChatPage() {
       if (updates.length === 0) return;
 
       setConversationActionCounts((prev) => {
-        let next = { ...prev };
+        const next = { ...prev };
         let changed = false;
         for (const u of updates) {
           for (const key of Object.keys(next)) {
