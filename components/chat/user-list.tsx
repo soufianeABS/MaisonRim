@@ -1531,11 +1531,12 @@ export function UserList({
                     
                     <div className="flex items-center gap-2 ml-2">
                       {conversationLoadingById[user.id] ? (
-                        <Loader2
-                          className="h-3.5 w-3.5 animate-spin text-muted-foreground"
-                          title="Action in progress"
-                          aria-label="Action in progress"
-                        />
+                        <span title="Action in progress" aria-label="Action in progress">
+                          <Loader2
+                            className="h-3.5 w-3.5 animate-spin text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                        </span>
                       ) : null}
                       <span className="text-xs text-muted-foreground">
                         {formatTime(user.last_message_time || user.last_active)}
