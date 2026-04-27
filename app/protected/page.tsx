@@ -138,6 +138,8 @@ export default function ChatPage() {
   const [messagingProvider, setMessagingProvider] = useState<
     'whatsapp_cloud' | 'green_api' | null
   >(null);
+  const [providerPhoneNumber, setProviderPhoneNumber] = useState<string | null>(null);
+  const [conversationActionCounts, setConversationActionCounts] = useState<Record<string, number>>({});
   const [broadcastGroupId, setBroadcastGroupId] = useState<string | null>(null);
   const [broadcastGroupName, setBroadcastGroupName] = useState<string | null>(null);
   /** 1:1 thread: fetching messages from RPC (false when showing cached prefetch). */
@@ -238,6 +240,7 @@ export default function ChatPage() {
         const provider = data.settings?.messaging_provider || 'whatsapp_cloud';
         setSetupProviderHint(provider === 'green_api' ? 'green_api' : 'whatsapp_cloud');
         setMessagingProvider(provider === 'green_api' ? 'green_api' : 'whatsapp_cloud');
+        setProviderPhoneNumber(data.settings?.provider_phone_number ?? null);
         const hasCommonPhone = !!data.settings?.provider_phone_number;
         const greenReady = !!(
           data.settings?.green_api_url &&
@@ -1056,9 +1059,14 @@ export default function ChatPage() {
     }
     
     if (!selectedUser || !user || sendingMessageRef.current || sendingMessage) return;
+    const targetContactId = selectedUser.id;
 
     sendingMessageRef.current = true;
     setSendingMessage(true);
+    setConversationActionCounts((prev) => ({
+      ...prev,
+      [targetContactId]: (prev[targetContactId] ?? 0) + 1,
+    }));
     
     // Generate optimistic message ID
     const optimisticId = `optimistic_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -1082,7 +1090,7 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, optimisticMessage]);
     
     try {
-      console.log(`Sending message to ${selectedUser.id}: ${content}`);
+      console.log(`Sending message to ${targetContactId}: ${content}`);
       
       // Call the WhatsApp API endpoint which handles both WhatsApp sending and database storage
       const response = await fetch('/api/send-message', {
@@ -1091,7 +1099,7 @@ export default function ChatPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          to: selectedUser.id,
+          to: targetContactId,
           message: content,
           ...(options?.originalMessage
             ? {
@@ -1141,7 +1149,7 @@ export default function ChatPage() {
       try {
         const fallbackMessage = {
           sender_id: user.id,
-          receiver_id: selectedUser.id,
+          receiver_id: targetContactId,
           content,
           timestamp: new Date().toISOString(),
           message_type: 'text',
@@ -1175,18 +1183,34 @@ export default function ChatPage() {
     } finally {
       sendingMessageRef.current = false;
       setSendingMessage(false);
+      setConversationActionCounts((prev) => {
+        const current = prev[targetContactId] ?? 0;
+        if (current <= 1) {
+          const { [targetContactId]: _removed, ...rest } = prev;
+          return rest;
+        }
+        return {
+          ...prev,
+          [targetContactId]: current - 1,
+        };
+      });
     }
   };
 
   const handleSendReaction = useCallback(
     async (messageId: string, emoji: string) => {
       if (!selectedUser || broadcastGroupId) return;
+      const targetContactId = selectedUser.id;
+      setConversationActionCounts((prev) => ({
+        ...prev,
+        [targetContactId]: (prev[targetContactId] ?? 0) + 1,
+      }));
       try {
         const response = await fetch('/api/send-reaction', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            to: selectedUser.id,
+            to: targetContactId,
             messageId,
             emoji,
           }),
@@ -1202,10 +1226,43 @@ export default function ChatPage() {
       } catch (e) {
         console.error('Send reaction:', e);
         alert(e instanceof Error ? e.message : 'Failed to send reaction');
+      } finally {
+        setConversationActionCounts((prev) => {
+          const current = prev[targetContactId] ?? 0;
+          if (current <= 1) {
+            const { [targetContactId]: _removed, ...rest } = prev;
+            return rest;
+          }
+          return {
+            ...prev,
+            [targetContactId]: current - 1,
+          };
+        });
       }
     },
     [selectedUser, broadcastGroupId],
   );
+
+  const handleConversationActionActivity = useCallback((contactId: string, isRunning: boolean) => {
+    if (!contactId) return;
+    setConversationActionCounts((prev) => {
+      const current = prev[contactId] ?? 0;
+      if (isRunning) {
+        return {
+          ...prev,
+          [contactId]: current + 1,
+        };
+      }
+      if (current <= 1) {
+        const { [contactId]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return {
+        ...prev,
+        [contactId]: current - 1,
+      };
+    });
+  }, []);
 
   // Show loading state while checking setup
   if (!user || checkingSetup) {
@@ -1279,6 +1336,10 @@ export default function ChatPage() {
               selectedUser={selectedUser}
               onUserSelect={handleUserSelect}
               currentUserId={user.id}
+              providerPhoneNumber={providerPhoneNumber}
+              conversationLoadingById={Object.fromEntries(
+                Object.entries(conversationActionCounts).map(([id, count]) => [id, count > 0]),
+              )}
               onUsersUpdate={refreshUsers}
               onBroadcastToGroup={handleBroadcastToGroup}
               isMobile={false}
@@ -1302,6 +1363,7 @@ export default function ChatPage() {
                   ? setMessages([])
                   : setMessages((prev) => prev.filter((m) => m.id !== id))
               }
+              onConversationActionActivity={handleConversationActionActivity}
               onClose={() => {
                 setSelectedUser(null);
                 setMessages([]);
@@ -1325,6 +1387,10 @@ export default function ChatPage() {
                 selectedUser={selectedUser}
                 onUserSelect={handleUserSelect}
                 currentUserId={user.id}
+                providerPhoneNumber={providerPhoneNumber}
+                conversationLoadingById={Object.fromEntries(
+                  Object.entries(conversationActionCounts).map(([id, count]) => [id, count > 0]),
+                )}
                 onUsersUpdate={refreshUsers}
                 onBroadcastToGroup={handleBroadcastToGroup}
                 isMobile={true}
@@ -1342,6 +1408,7 @@ export default function ChatPage() {
                 onMessageDeleted={(id) =>
                   id === "__clear_all__" ? setMessages([]) : setMessages((prev) => prev.filter((m) => m.id !== id))
                 }
+                onConversationActionActivity={handleConversationActionActivity}
                 onBack={() => {
                   handleBackToUsers();
                   setBroadcastGroupId(null);

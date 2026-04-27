@@ -9,6 +9,7 @@ type SectionKey =
   | "themeColors"
   | "translation"
   | "imagePrompts"
+  | "contactData"
   | "statuses"
   | "dynamicActions";
 
@@ -18,6 +19,7 @@ const ALL_SECTIONS: SectionKey[] = [
   "themeColors",
   "translation",
   "imagePrompts",
+  "contactData",
   "statuses",
   "dynamicActions",
 ];
@@ -42,6 +44,11 @@ type ExportBundle = {
     themeColors?: { light?: Record<string, string>; dark?: Record<string, string> } | null;
     translation?: { translation_target_language: string | null; translation_enabled: boolean };
     imagePrompts?: Array<{ name: string; prompt: string; expected_json: string }>;
+    contactData?: {
+      default_field_name: string | null;
+      templates: Array<{ name: string; sort_order: number }>;
+      entries: Array<{ contact_phone: string; field_key: string; field_value: string }>;
+    };
     statuses?: Array<{ old_id: string; name: string; color: string; rule: string; rule_mode: "ai" | "hard" }>;
     dynamicActions?: Array<{
       action_name: string;
@@ -180,6 +187,40 @@ export async function POST(request: NextRequest) {
           expected_json: asString(row.expected_json),
         };
       });
+    }
+
+    if (sections.includes("contactData")) {
+      const [{ data: pref }, { data: templates }, { data: entries }] = await Promise.all([
+        supabase
+          .from("user_settings")
+          .select("contact_data_default_field_name")
+          .eq("id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("contact_data_field_templates")
+          .select("name, sort_order")
+          .eq("owner_id", user.id)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("contact_data_entries")
+          .select("contact_phone, field_key, field_value")
+          .eq("owner_id", user.id)
+          .order("updated_at", { ascending: false }),
+      ]);
+
+      payload.contactData = {
+        default_field_name: asString((pref as Record<string, unknown> | null)?.contact_data_default_field_name).trim() || null,
+        templates: (templates ?? []).map((x) => ({
+          name: asString((x as Record<string, unknown>).name).trim(),
+          sort_order: Number((x as Record<string, unknown>).sort_order ?? 0) || 0,
+        })),
+        entries: (entries ?? []).map((x) => ({
+          contact_phone: asString((x as Record<string, unknown>).contact_phone).replace(/[^\d]/g, ""),
+          field_key: asString((x as Record<string, unknown>).field_key).trim(),
+          field_value: asString((x as Record<string, unknown>).field_value),
+        })),
+      };
     }
 
     if (sections.includes("statuses") || sections.includes("dynamicActions")) {
@@ -408,6 +449,61 @@ export async function POST(request: NextRequest) {
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
     imported.imagePrompts = rows.length;
+  }
+
+  if (sections.includes("contactData")) {
+    const contactData = asObject(payload.contactData);
+
+    if (contactData) {
+      const defaultFieldName = asString(contactData.default_field_name).trim().slice(0, 200) || null;
+      const { error: prefError } = await supabase.from("user_settings").upsert(
+        {
+          id: user.id,
+          contact_data_default_field_name: defaultFieldName,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id" },
+      );
+      if (prefError) return NextResponse.json({ error: prefError.message }, { status: 500 });
+    }
+
+    const rawTemplates = Array.isArray(contactData?.templates) ? contactData.templates : [];
+    const templateRows = rawTemplates
+      .map((x) => asObject(x))
+      .filter((x): x is Record<string, unknown> => Boolean(x))
+      .map((row) => ({
+        owner_id: user.id,
+        name: asString(row.name).trim().slice(0, 200),
+        sort_order: Number(row.sort_order ?? 0) || 0,
+      }))
+      .filter((row) => row.name);
+    if (templateRows.length > 0) {
+      const { error } = await supabase.from("contact_data_field_templates").upsert(templateRows, {
+        onConflict: "owner_id,name",
+      });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const rawEntries = Array.isArray(contactData?.entries) ? contactData.entries : [];
+    const entryRows = rawEntries
+      .map((x) => asObject(x))
+      .filter((x): x is Record<string, unknown> => Boolean(x))
+      .map((row) => ({
+        owner_id: user.id,
+        contact_phone: asString(row.contact_phone).replace(/[^\d]/g, "").slice(0, 20),
+        field_key: asString(row.field_key).trim().slice(0, 200),
+        field_value: asString(row.field_value).slice(0, 8000),
+      }))
+      .filter((row) => row.contact_phone.length >= 6 && row.field_key);
+    if (entryRows.length > 0) {
+      const { error } = await supabase.from("contact_data_entries").upsert(entryRows, {
+        onConflict: "owner_id,contact_phone,field_key",
+      });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    imported.contactData = entryRows.length;
+    imported.contactDataTemplates = templateRows.length;
   }
 
   if (sections.includes("dynamicActions")) {

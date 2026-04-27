@@ -231,6 +231,8 @@ interface ChatWindowProps {
   broadcastGroupName?: string | null;
   /** Called after a message row is removed (e.g. localhost test delete) so parent state updates even if Realtime lags */
   onMessageDeleted?: (messageId: string) => void;
+  /** Per-conversation activity signal used by UserList spinners. */
+  onConversationActionActivity?: (contactId: string, isRunning: boolean) => void;
 }
 
 /** Green API outgoingMessageStatus → WhatsApp-style ticks on your bubbles */
@@ -385,6 +387,7 @@ export function ChatWindow({
   onUsersUpdate,
   broadcastGroupName,
   onMessageDeleted,
+  onConversationActionActivity,
 }: ChatWindowProps) {
   type MappedAction = { id: string; name: string };
   const [messageInput, setMessageInput] = useState("");
@@ -1516,6 +1519,7 @@ export function ChatWindow({
   const runDynamicAction = async (actionId?: string) => {
     if (!selectedUser || broadcastGroupName) return;
     if (runningAction) return;
+    const targetContactId = selectedUser.id;
 
     const statusId = selectedUser.status_id ?? null;
     const tagName = selectedUser.status_name ?? undefined;
@@ -1528,12 +1532,13 @@ export function ChatWindow({
     }
 
     setRunningAction(true);
+    onConversationActionActivity?.(targetContactId, true);
     try {
       const res = await fetch("/api/actions/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          conversationId: selectedUser.id,
+          conversationId: targetContactId,
           statusId,
           tagName,
           actionId: resolvedActionId,
@@ -1564,6 +1569,7 @@ export function ChatWindow({
       alert(e instanceof Error ? e.message : "Action failed");
     } finally {
       setRunningAction(false);
+      onConversationActionActivity?.(targetContactId, false);
     }
   };
 

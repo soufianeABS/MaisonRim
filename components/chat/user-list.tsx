@@ -62,6 +62,7 @@ type TransferSectionKey =
   | "themeColors"
   | "translation"
   | "imagePrompts"
+  | "contactData"
   | "statuses"
   | "dynamicActions";
 
@@ -71,6 +72,7 @@ const TRANSFER_SECTIONS: Array<{ key: TransferSectionKey; label: string }> = [
   { key: "themeColors", label: "Theme & colors" },
   { key: "translation", label: "Translation" },
   { key: "imagePrompts", label: "Image Prompts" },
+  { key: "contactData", label: "Contact data" },
   { key: "statuses", label: "Statuses" },
   { key: "dynamicActions", label: "Dynamic Actions" },
 ];
@@ -105,6 +107,8 @@ interface UserListProps {
   selectedUser: ChatUser | null;
   onUserSelect: (user: ChatUser) => void;
   currentUserId: string;
+  providerPhoneNumber?: string | null;
+  conversationLoadingById?: Record<string, boolean>;
   onUsersUpdate?: () => void;
   onBroadcastToGroup?: (groupId: string, groupName: string) => void;
   /** When true, disable per-conversation tag editing controls. */
@@ -173,6 +177,8 @@ export function UserList({
   selectedUser,
   onUserSelect,
   currentUserId,
+  providerPhoneNumber = null,
+  conversationLoadingById = {},
   onUsersUpdate,
   onBroadcastToGroup,
   isMobile = false,
@@ -1061,7 +1067,7 @@ export function UserList({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <MessageCircle className="h-6 w-6" />
-            <h1 className="text-lg font-semibold">WhatsApp</h1>
+            <h1 className="text-lg font-semibold">{providerPhoneNumber?.trim() || "WhatsApp"}</h1>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -1524,6 +1530,13 @@ export function UserList({
                     </div>
                     
                     <div className="flex items-center gap-2 ml-2">
+                      {conversationLoadingById[user.id] ? (
+                        <Loader2
+                          className="h-3.5 w-3.5 animate-spin text-muted-foreground"
+                          title="Action in progress"
+                          aria-label="Action in progress"
+                        />
+                      ) : null}
                       <span className="text-xs text-muted-foreground">
                         {formatTime(user.last_message_time || user.last_active)}
                       </span>
