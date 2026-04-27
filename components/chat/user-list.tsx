@@ -22,6 +22,8 @@ import {
   ChevronDown,
   Bookmark,
   Loader2,
+  CheckCircle2,
+  CircleX,
   Languages,
   Palette,
   ArrowDownToLine,
@@ -109,6 +111,10 @@ interface UserListProps {
   currentUserId: string;
   providerPhoneNumber?: string | null;
   conversationLoadingById?: Record<string, boolean>;
+  /** Shown after a dynamic action completes until the user opens that conversation. */
+  conversationActionResultById?: Record<string, "success" | "error">;
+  /** Local-only cancel for stuck loading indicators. */
+  onStopConversationLoading?: (contactId: string) => void;
   onUsersUpdate?: () => void;
   onBroadcastToGroup?: (groupId: string, groupName: string) => void;
   /** When true, disable per-conversation tag editing controls. */
@@ -179,6 +185,8 @@ export function UserList({
   currentUserId,
   providerPhoneNumber = null,
   conversationLoadingById = {},
+  conversationActionResultById = {},
+  onStopConversationLoading,
   onUsersUpdate,
   onBroadcastToGroup,
   isMobile = false,
@@ -1531,9 +1539,37 @@ export function UserList({
                     
                     <div className="flex items-center gap-2 ml-2">
                       {conversationLoadingById[user.id] ? (
-                        <span title="Action in progress" aria-label="Action in progress">
-                          <Loader2
-                            className="h-3.5 w-3.5 animate-spin text-muted-foreground"
+                        <div className="flex items-center gap-1">
+                          <span title="Action in progress" aria-label="Action in progress">
+                            <Loader2
+                              className="h-3.5 w-3.5 animate-spin text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                          </span>
+                          <button
+                            type="button"
+                            className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground/80 hover:bg-muted hover:text-foreground"
+                            title="Stop loading indicator (local only)"
+                            aria-label="Stop loading indicator"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onStopConversationLoading?.(user.id);
+                            }}
+                          >
+                            <X className="h-3 w-3" aria-hidden="true" />
+                          </button>
+                        </div>
+                      ) : conversationActionResultById[user.id] === "success" ? (
+                        <span title="Action completed" aria-label="Action completed">
+                          <CheckCircle2
+                            className="h-3.5 w-3.5 text-emerald-500"
+                            aria-hidden="true"
+                          />
+                        </span>
+                      ) : conversationActionResultById[user.id] === "error" ? (
+                        <span title="Action failed" aria-label="Action failed">
+                          <CircleX
+                            className="h-3.5 w-3.5 text-destructive"
                             aria-hidden="true"
                           />
                         </span>

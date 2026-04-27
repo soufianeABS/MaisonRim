@@ -6,7 +6,6 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Send, MessageCircle, Loader2, X, Download, FileText, Image as ImageIcon, Play, Pause, RefreshCw, Volume2, Paperclip, MessageSquare, Users, Sparkles, Reply, Smile, Check, Languages, ChevronDown } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import { fetchContactStatusesCached } from "@/lib/contact-statuses-cache";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
@@ -241,10 +240,12 @@ interface ChatWindowProps {
   onUpdateName?: (userId: string, customName: string) => Promise<void>;
   onUsersUpdate?: () => void;
   broadcastGroupName?: string | null;
+  /** Stable id for broadcast composer draft key (name alone can collide). */
+  broadcastGroupId?: string | null;
   /** Called after a message row is removed (e.g. localhost test delete) so parent state updates even if Realtime lags */
   onMessageDeleted?: (messageId: string) => void;
-  /** Per-conversation activity signal used by UserList spinners. */
-  onConversationActionActivity?: (contactId: string, isRunning: boolean) => void;
+  /** Per-conversation activity signal used by UserList spinners / result icons. */
+  onConversationActionActivity?: (contactId: string, isRunning: boolean, outcome?: "success" | "error") => void;
 }
 
 /** Green API outgoingMessageStatus → WhatsApp-style ticks on your bubbles */
@@ -314,6 +315,46 @@ function quickReactionButtonTitle(
 }
 
 const COMPOSER_EMOJI_USAGE_KEY = "wachat:composerEmojiUsage";
+
+const COMPOSER_DRAFTS_SESSION_KEY = "wachat:composerDraftsByThreadV1";
+const MAX_COMPOSER_DRAFTS_STORED = 120;
+
+function loadComposerDraftsFromSession(): Record<string, string> {
+  try {
+    const raw = sessionStorage.getItem(COMPOSER_DRAFTS_SESSION_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof k === "string" && typeof v === "string" && v.trim().length > 0) {
+        out[k] = v.slice(0, 1000);
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function trimComposerDraftsForStorage(map: Record<string, string>): Record<string, string> {
+  const entries = Object.entries(map).filter(([, v]) => v.trim().length > 0);
+  if (entries.length <= MAX_COMPOSER_DRAFTS_STORED) {
+    return Object.fromEntries(entries.map(([k, v]) => [k, v.slice(0, 1000)]));
+  }
+  return Object.fromEntries(entries.slice(-MAX_COMPOSER_DRAFTS_STORED).map(([k, v]) => [k, v.slice(0, 1000)]));
+}
+
+function persistComposerDraftsToSession(map: Record<string, string>) {
+  try {
+    sessionStorage.setItem(
+      COMPOSER_DRAFTS_SESSION_KEY,
+      JSON.stringify(trimComposerDraftsForStorage(map)),
+    );
+  } catch {
+    /* quota / private mode */
+  }
+}
 
 const COMPOSER_EMOJI_PALETTE = [
   "👍",
@@ -398,11 +439,84 @@ export function ChatWindow({
   onUpdateName,
   onUsersUpdate,
   broadcastGroupName,
+  broadcastGroupId = null,
   onMessageDeleted,
   onConversationActionActivity,
 }: ChatWindowProps) {
+  void onMessageDeleted;
   type MappedAction = { id: string; name: string };
   const [messageInput, setMessageInput] = useState("");
+  const draftMirrorRef = useRef("");
+  draftMirrorRef.current = messageInput;
+
+  const composerDraftsRef = useRef<Record<string, string>>({});
+  const lastComposerThreadKeyRef = useRef<string>("");
+  const composerDraftsHydratedRef = useRef(false);
+  const composerPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Avoids a passive effect pass overwriting restored/switched draft with stale `messageInput`. */
+  const skipComposerDraftSyncRef = useRef(false);
+
+  const composerThreadKey = useMemo(() => {
+    if (selectedUser?.id) return `c:${selectedUser.id}`;
+    if (broadcastGroupName) return `g:${broadcastGroupId ?? broadcastGroupName}`;
+    return "";
+  }, [selectedUser?.id, broadcastGroupName, broadcastGroupId]);
+
+  const schedulePersistComposerDrafts = useCallback(() => {
+    if (composerPersistTimerRef.current != null) {
+      clearTimeout(composerPersistTimerRef.current);
+    }
+    composerPersistTimerRef.current = setTimeout(() => {
+      composerPersistTimerRef.current = null;
+      persistComposerDraftsToSession(composerDraftsRef.current);
+    }, 400);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!composerDraftsHydratedRef.current) {
+      composerDraftsHydratedRef.current = true;
+      composerDraftsRef.current = {
+        ...loadComposerDraftsFromSession(),
+        ...composerDraftsRef.current,
+      };
+    }
+
+    const next = composerThreadKey;
+    const prev = lastComposerThreadKeyRef.current;
+    if (prev === next) return;
+
+    if (prev) {
+      composerDraftsRef.current[prev] = draftMirrorRef.current;
+    }
+    lastComposerThreadKeyRef.current = next;
+    const restored = next ? (composerDraftsRef.current[next] ?? "") : "";
+    if (next) {
+      composerDraftsRef.current[next] = restored;
+    }
+    skipComposerDraftSyncRef.current = true;
+    setMessageInput(restored);
+    schedulePersistComposerDrafts();
+  }, [composerThreadKey, schedulePersistComposerDrafts]);
+
+  useEffect(() => {
+    if (skipComposerDraftSyncRef.current) {
+      skipComposerDraftSyncRef.current = false;
+      return;
+    }
+    const k = composerThreadKey;
+    if (!k) return;
+    composerDraftsRef.current[k] = messageInput;
+    schedulePersistComposerDrafts();
+  }, [messageInput, composerThreadKey, schedulePersistComposerDrafts]);
+
+  useEffect(() => {
+    return () => {
+      if (composerPersistTimerRef.current != null) {
+        clearTimeout(composerPersistTimerRef.current);
+      }
+      persistComposerDraftsToSession(composerDraftsRef.current);
+    };
+  }, []);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [refreshingUrls, setRefreshingUrls] = useState<Set<string>>(new Set());
   const refreshingUrlsRef = useRef<Set<string>>(new Set());
@@ -641,7 +755,7 @@ export function ChatWindow({
     return () => {
       cancelled = true;
     };
-  }, [messages, translationTargetLang, translationUiEnabled, conversationAutoTranslate]);
+  }, [messages, translationTargetLang, translationUiEnabled, conversationAutoTranslate, showAppNotice]);
 
   useEffect(() => {
     if (!selectedUser || broadcastGroupName) {
@@ -1121,6 +1235,25 @@ export function ChatWindow({
     adjustMessageInputHeight();
   }, [messageInput, adjustMessageInputHeight]);
 
+  /** Writes async API text into the draft for that 1:1 contact, not whichever chat is open when the response arrives. */
+  const applyDraftForOneToOneContact = useCallback(
+    (contactId: string, text: string) => {
+      const key = `c:${contactId}`;
+      const next = text.slice(0, 1000);
+      composerDraftsRef.current[key] = next;
+      schedulePersistComposerDrafts();
+      if (composerThreadKey === key) {
+        skipComposerDraftSyncRef.current = true;
+        setMessageInput(next);
+        requestAnimationFrame(() => {
+          messageInputRef.current?.focus();
+          adjustMessageInputHeight();
+        });
+      }
+    },
+    [composerThreadKey, schedulePersistComposerDrafts, adjustMessageInputHeight],
+  );
+
   const commitSend = useCallback(async () => {
     if (
       !messageInput.trim() ||
@@ -1194,6 +1327,11 @@ export function ChatWindow({
           : {}),
       });
       setReplyingTo(null);
+      if (composerThreadKey) {
+        delete composerDraftsRef.current[composerThreadKey];
+        persistComposerDraftsToSession(composerDraftsRef.current);
+        skipComposerDraftSyncRef.current = true;
+      }
       setMessageInput("");
       requestAnimationFrame(() => {
         messageInputRef.current?.focus();
@@ -1214,6 +1352,7 @@ export function ChatWindow({
     adjustMessageInputHeight,
     messages,
     conversationAutoTranslate,
+    composerThreadKey,
   ]);
 
   const handleSendMessage = (e: React.FormEvent) => {
@@ -1418,6 +1557,7 @@ export function ChatWindow({
         return;
       }
 
+      const suggestForContactId = selectedUser.id;
       const recent = nonOptimistic.slice(-10);
 
       setSuggestingReply(true);
@@ -1445,7 +1585,7 @@ export function ChatWindow({
                 }
               })(),
             })),
-            contactId: selectedUser.id,
+            contactId: suggestForContactId,
             ...(agentId ? { agentId } : {}),
           }),
         });
@@ -1457,7 +1597,7 @@ export function ChatWindow({
         if (!suggestion) {
           throw new Error("Empty suggestion");
         }
-        setMessageInput(suggestion.slice(0, 1000));
+        applyDraftForOneToOneContact(suggestForContactId, suggestion);
       } catch (err) {
         console.error("Suggest reply:", err);
         showAppNotice(err instanceof Error ? err.message : "Could not get a suggested reply.", "error");
@@ -1473,6 +1613,7 @@ export function ChatWindow({
       resolvedStatusRuleMode,
       resolvedRuleText,
       showAppNotice,
+      applyDraftForOneToOneContact,
     ],
   );
 
@@ -1564,6 +1705,7 @@ export function ChatWindow({
 
     setRunningAction(true);
     onConversationActionActivity?.(targetContactId, true);
+    let actionOutcome: "success" | "error" | undefined;
     try {
       const res = await fetch("/api/actions/run", {
         method: "POST",
@@ -1579,6 +1721,7 @@ export function ChatWindow({
       if (!res.ok) {
         throw new Error(data?.error || "Action failed");
       }
+      actionOutcome = "success";
       const autoSent = Boolean(data?.autoSent);
       const renderedMessage =
         data && typeof data.renderedMessage === "string" ? data.renderedMessage.trim() : "";
@@ -1611,7 +1754,7 @@ export function ChatWindow({
       }
 
       if (renderedMessage && !autoSent) {
-        setMessageInput(renderedMessage.slice(0, 1000));
+        applyDraftForOneToOneContact(targetContactId, renderedMessage);
       }
       // Response is stored in contacts.metadata by the server; show quick confirmation.
       console.log("Dynamic action executed:", data);
@@ -1626,10 +1769,11 @@ export function ChatWindow({
       await onUsersUpdate?.();
     } catch (e) {
       console.error("Run action:", e);
+      actionOutcome = "error";
       showAppNotice(e instanceof Error ? e.message : "Action failed", "error");
     } finally {
       setRunningAction(false);
-      onConversationActionActivity?.(targetContactId, false);
+      onConversationActionActivity?.(targetContactId, false, actionOutcome);
     }
   };
 

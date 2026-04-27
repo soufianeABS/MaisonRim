@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { UserList } from "@/components/chat/user-list";
 import { ChatWindow } from "@/components/chat/chat-window";
@@ -60,6 +60,27 @@ type ConversationActionPersisted = {
   count: number;
   updatedAt: number;
 };
+
+function readPersistedIndicatorStatus(metadata: unknown): "success" | "error" | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const ui = (metadata as Record<string, unknown>).ui;
+  if (!ui || typeof ui !== "object" || Array.isArray(ui)) return null;
+  const actionIndicator = (ui as Record<string, unknown>).action_indicator;
+  if (!actionIndicator || typeof actionIndicator !== "object" || Array.isArray(actionIndicator)) return null;
+  const status = (actionIndicator as Record<string, unknown>).status;
+  return status === "success" || status === "error" ? status : null;
+}
+
+/** True when server marked this contact as running a dynamic action (cross-tab spinner). */
+function readDynamicActionRunning(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
+  const ui = (metadata as Record<string, unknown>).ui;
+  if (!ui || typeof ui !== "object" || Array.isArray(ui)) return false;
+  const run = (ui as Record<string, unknown>).dynamic_action_running;
+  if (!run || typeof run !== "object" || Array.isArray(run)) return false;
+  const startedAt = (run as Record<string, unknown>).started_at;
+  return typeof startedAt === "string" && startedAt.trim().length > 0;
+}
 
 /**
  * Supabase Realtime often delivers JSON/JSONB columns as parsed objects; RPC SELECT
@@ -147,7 +168,19 @@ export default function ChatPage() {
     'whatsapp_cloud' | 'green_api' | null
   >(null);
   const [providerPhoneNumber, setProviderPhoneNumber] = useState<string | null>(null);
+  /**
+   * Ref-count of in-flight work per conversation (send, reaction, dynamic action).
+   * Spinner visibility is derived — see `conversationLoadingById` below.
+   */
   const [conversationActionCounts, setConversationActionCounts] = useState<Record<string, number>>({});
+  /** After a dynamic action finishes (not while viewing that chat), show check / fail in the list until the user opens the thread. */
+  const [conversationActionResultById, setConversationActionResultById] = useState<
+    Record<string, "success" | "error">
+  >({});
+  /** Spinner driven by `contacts.metadata.ui.dynamic_action_running` (other tabs / browsers). */
+  const [conversationRemoteActionSpinnerById, setConversationRemoteActionSpinnerById] = useState<
+    Record<string, boolean>
+  >({});
   const [broadcastGroupId, setBroadcastGroupId] = useState<string | null>(null);
   const [broadcastGroupName, setBroadcastGroupName] = useState<string | null>(null);
   /** 1:1 thread: fetching messages from RPC (false when showing cached prefetch). */
@@ -169,10 +202,39 @@ export default function ChatPage() {
   const selectedUserRef = useRef<ChatUser | null>(null);
   const broadcastGroupIdRef = useRef<string | null>(null);
   const fetchUsersRef = useRef<(() => Promise<void>) | null>(null);
+  const conversationActionCountsRef = useRef<Record<string, number>>({});
+  const conversationRemoteActionSpinnerRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     usersRef.current = users;
   }, [users]);
+
+  useEffect(() => {
+    conversationActionCountsRef.current = conversationActionCounts;
+  }, [conversationActionCounts]);
+
+  useEffect(() => {
+    conversationRemoteActionSpinnerRef.current = conversationRemoteActionSpinnerById;
+  }, [conversationRemoteActionSpinnerById]);
+
+  /** Local ref-counts OR server `dynamic_action_running` (other clients). */
+  const conversationLoadingById = useMemo(() => {
+    const out: Record<string, boolean> = {};
+    for (const [id, count] of Object.entries(conversationActionCounts)) {
+      if ((count ?? 0) > 0) out[id] = true;
+    }
+    for (const [id, on] of Object.entries(conversationRemoteActionSpinnerById)) {
+      if (on) out[id] = true;
+    }
+    return out;
+  }, [conversationActionCounts, conversationRemoteActionSpinnerById]);
+
+  const hasPendingActionSpinner = useMemo(
+    () =>
+      Object.values(conversationActionCounts).some((c) => c > 0) ||
+      Object.values(conversationRemoteActionSpinnerById).some(Boolean),
+    [conversationActionCounts, conversationRemoteActionSpinnerById],
+  );
 
   useEffect(() => {
     try {
@@ -196,11 +258,25 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
+    let previousPersisted: Record<string, ConversationActionPersisted> = {};
+    try {
+      const raw = window.sessionStorage.getItem(CONVERSATION_ACTION_COUNTS_STORAGE_KEY);
+      if (raw) {
+        previousPersisted = JSON.parse(raw) as Record<string, ConversationActionPersisted>;
+      }
+    } catch {
+      previousPersisted = {};
+    }
     const now = Date.now();
     const toPersist: Record<string, ConversationActionPersisted> = {};
     for (const [contactId, count] of Object.entries(conversationActionCounts)) {
       if (count > 0) {
-        toPersist[contactId] = { count, updatedAt: now };
+        const previousUpdatedAt = previousPersisted[contactId]?.updatedAt;
+        toPersist[contactId] = {
+          count,
+          // Keep original timestamp so refresh doesn't endlessly extend spinner lifetime.
+          updatedAt: typeof previousUpdatedAt === "number" ? previousUpdatedAt : now,
+        };
       }
     }
     if (Object.keys(toPersist).length === 0) {
@@ -253,6 +329,221 @@ export default function ChatPage() {
   useEffect(() => {
     broadcastGroupIdRef.current = broadcastGroupId;
   }, [broadcastGroupId]);
+
+  /** When an action finishes on the server (metadata.ui.action_indicator) or is cleared, sync list UI without manual refresh. */
+  useEffect(() => {
+    if (!user?.id) return;
+    const client = createClient();
+
+    const applyContactActionUiFromPayload = (payload: {
+      old?: Record<string, unknown> | null;
+      new?: Record<string, unknown> | null;
+    }) => {
+      const row = (payload.new ?? {}) as { phone?: unknown; metadata?: unknown };
+      const phone = String(row.phone ?? "").trim();
+      if (!phone) return;
+
+      const oldMeta =
+        payload.old && typeof payload.old === "object"
+          ? (payload.old as { metadata?: unknown }).metadata
+          : undefined;
+      const newStatus = readPersistedIndicatorStatus(row.metadata);
+      const oldStatus = readPersistedIndicatorStatus(oldMeta);
+      const newRun = readDynamicActionRunning(row.metadata);
+      const oldRun = readDynamicActionRunning(oldMeta);
+      if (newStatus === oldStatus && newRun === oldRun) return;
+
+      const listIds = new Set<string>();
+      for (const u of usersRef.current) {
+        if (sameConversationContactId(u.id, phone)) listIds.add(u.id);
+      }
+      listIds.add(phone);
+
+      if (newRun !== oldRun) {
+        setConversationRemoteActionSpinnerById((prev) => {
+          const next = { ...prev };
+          let changed = false;
+          for (const id of listIds) {
+            if (newRun) {
+              if (next[id] !== true) {
+                next[id] = true;
+                changed = true;
+              }
+            } else if (next[id]) {
+              delete next[id];
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      }
+
+      if (newStatus === oldStatus) return;
+
+      setConversationActionCounts((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (sameConversationContactId(key, phone)) {
+            delete next[key];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+
+      setConversationActionResultById((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        for (const id of listIds) {
+          if (newStatus) {
+            if (next[id] !== newStatus) {
+              next[id] = newStatus;
+              changed = true;
+            }
+          } else if (id in next) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    };
+
+    const channel = client
+      .channel(`contacts-action-ui-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "contacts",
+          filter: `owner_id=eq.${user.id}`,
+        },
+        (payload) => {
+          applyContactActionUiFromPayload({
+            old: payload.old as Record<string, unknown> | null,
+            new: payload.new as Record<string, unknown> | null,
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [user?.id]);
+
+  /** Poll DB while any row shows the action spinner — fixes missed Realtime + refresh-mid-action. */
+  useEffect(() => {
+    if (!user?.id || !hasPendingActionSpinner) return;
+    const client = createClient();
+    const ownerId = user.id;
+
+    const poll = async () => {
+      const snap = conversationActionCountsRef.current;
+      const remoteSnap = conversationRemoteActionSpinnerRef.current;
+      const pendingKeys = [
+        ...new Set([
+          ...Object.keys(snap).filter((k) => (snap[k] ?? 0) > 0),
+          ...Object.keys(remoteSnap).filter((k) => remoteSnap[k]),
+        ]),
+      ];
+      if (pendingKeys.length === 0) return;
+
+      const phoneCandidates = new Set<string>();
+      for (const k of pendingKeys) {
+        phoneCandidates.add(k);
+        const d = k.replace(/\D/g, "");
+        if (d) phoneCandidates.add(d);
+      }
+      const list = [...phoneCandidates].slice(0, 80);
+      if (list.length === 0) return;
+
+      const { data: rows, error } = await client
+        .from("contacts")
+        .select("phone, metadata")
+        .eq("owner_id", ownerId)
+        .in("phone", list);
+
+      if (error || !rows?.length) return;
+
+      setConversationRemoteActionSpinnerById((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        for (const row of rows) {
+          const phone = String((row as { phone?: unknown }).phone ?? "").trim();
+          if (!phone) continue;
+          const running = readDynamicActionRunning((row as { metadata?: unknown }).metadata);
+          const ids = new Set<string>(
+            usersRef.current.map((x) => x.id).filter((id) => sameConversationContactId(id, phone)),
+          );
+          ids.add(phone);
+          for (const id of ids) {
+            if (running) {
+              if (next[id] !== true) {
+                next[id] = true;
+                changed = true;
+              }
+            } else if (next[id]) {
+              delete next[id];
+              changed = true;
+            }
+          }
+        }
+        return changed ? next : prev;
+      });
+
+      const updates: { phone: string; status: "success" | "error" }[] = [];
+      for (const row of rows) {
+        const phone = String((row as { phone?: unknown }).phone ?? "").trim();
+        if (!phone) continue;
+        const status = readPersistedIndicatorStatus((row as { metadata?: unknown }).metadata);
+        if (!status) continue;
+        if (!pendingKeys.some((k) => sameConversationContactId(k, phone))) continue;
+        updates.push({ phone, status });
+      }
+      if (updates.length === 0) return;
+
+      setConversationActionCounts((prev) => {
+        let next = { ...prev };
+        let changed = false;
+        for (const u of updates) {
+          for (const key of Object.keys(next)) {
+            if (sameConversationContactId(key, u.phone)) {
+              delete next[key];
+              changed = true;
+            }
+          }
+        }
+        return changed ? next : prev;
+      });
+
+      setConversationActionResultById((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        for (const u of updates) {
+          const ids = new Set<string>(
+            usersRef.current.map((x) => x.id).filter((id) => sameConversationContactId(id, u.phone)),
+          );
+          ids.add(u.phone);
+          for (const id of ids) {
+            if (next[id] !== u.status) {
+              next[id] = u.status;
+              changed = true;
+            }
+          }
+        }
+        return changed ? next : prev;
+      });
+    };
+
+    void poll();
+    const intervalId = window.setInterval(() => {
+      void poll();
+    }, 5000);
+    return () => window.clearInterval(intervalId);
+  }, [user?.id, hasPendingActionSpinner]);
 
   const mapMessageRows = useCallback(
     (rows: unknown[]): Message[] => {
@@ -442,6 +733,75 @@ export default function ChatPage() {
 
         setUsers(transformedUsers);
 
+        try {
+          const ids = transformedUsers.map((u) => u.id).filter(Boolean);
+          if (ids.length === 0) {
+            setConversationActionResultById({});
+            setConversationRemoteActionSpinnerById({});
+          } else {
+            const { data: contactsRows, error: contactsError } = await supabase
+              .from("contacts")
+              .select("phone, metadata")
+              .eq("owner_id", user.id)
+              .in("phone", ids);
+            if (contactsError) {
+              console.error("Error fetching persisted action indicators:", contactsError);
+            } else {
+              const persisted: Record<string, "success" | "error"> = {};
+              for (const row of contactsRows ?? []) {
+                const phone = String((row as { phone?: unknown }).phone ?? "");
+                const status = readPersistedIndicatorStatus((row as { metadata?: unknown }).metadata);
+                if (phone && status) persisted[phone] = status;
+              }
+              setConversationActionResultById((prev) => ({ ...prev, ...persisted }));
+              // Session-restore can leave a spinner while DB already shows completion — clear counts.
+              if (Object.keys(persisted).length > 0) {
+                setConversationActionCounts((prev) => {
+                  let changed = false;
+                  const next = { ...prev };
+                  for (const countKey of Object.keys(next)) {
+                    for (const phone of Object.keys(persisted)) {
+                      if (sameConversationContactId(countKey, phone)) {
+                        delete next[countKey];
+                        changed = true;
+                        break;
+                      }
+                    }
+                  }
+                  return changed ? next : prev;
+                });
+              }
+              setConversationRemoteActionSpinnerById((prev) => {
+                const next = { ...prev };
+                let changed = false;
+                for (const u of transformedUsers) {
+                  const row = (contactsRows ?? []).find((r) =>
+                    sameConversationContactId(
+                      String((r as { phone?: unknown }).phone ?? ""),
+                      u.id,
+                    ),
+                  );
+                  const running = row
+                    ? readDynamicActionRunning((row as { metadata?: unknown }).metadata)
+                    : false;
+                  if (running) {
+                    if (next[u.id] !== true) {
+                      next[u.id] = true;
+                      changed = true;
+                    }
+                  } else if (next[u.id]) {
+                    delete next[u.id];
+                    changed = true;
+                  }
+                }
+                return changed ? next : prev;
+              });
+            }
+          }
+        } catch (e) {
+          console.error("Failed to sync persisted action indicators:", e);
+        }
+
         // On initial load, preload top 10 unread conversations
         if (isInitialLoad) {
           isInitialLoad = false;
@@ -622,6 +982,11 @@ export default function ChatPage() {
 
     let cancelled = false;
     const contactId = selectedUser.id;
+    /** Realtime callbacks can fire after switching chats; ignore them if we're no longer on this thread. */
+    const isStaleMessagesRealtimeHandler = () => {
+      const v = selectedUserRef.current;
+      return !v || !sameConversationContactId(v.id, contactId);
+    };
 
     const cached = messagesCacheRef.current.get(contactId);
     const cacheFresh = !!(cached && Date.now() - cached.at < CACHE_TTL_MS);
@@ -668,14 +1033,15 @@ export default function ChatPage() {
         schema: 'public', 
         table: 'messages'
       }, (payload) => {
+        if (isStaleMessagesRealtimeHandler()) return;
         const newMessage = payload.new as MessagePayload;
-        
+
         const isRelevantMessage = messageBelongsToContactThread(
           newMessage,
           user.id,
-          selectedUser.id,
+          contactId,
         );
-        
+
         if (isRelevantMessage) {
           const sentByMe = isMessageFromCurrentUser(newMessage, user.id);
           const messageWithFlag: Message = {
@@ -713,10 +1079,11 @@ export default function ChatPage() {
           // Mark message as read if we received it (not an outbound row)
           if (!messageWithFlag.is_sent_by_me) {
             setTimeout(() => {
+              if (isStaleMessagesRealtimeHandler()) return;
               fetch('/api/messages/mark-read', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ otherUserId: selectedUser.id })
+                body: JSON.stringify({ otherUserId: contactId }),
               }).catch(console.error);
             }, 500);
           }
@@ -727,14 +1094,15 @@ export default function ChatPage() {
         schema: 'public', 
         table: 'messages'
       }, (payload) => {
+        if (isStaleMessagesRealtimeHandler()) return;
         const updatedMessage = payload.new as MessagePayload;
-        
+
         const isRelevantMessage = messageBelongsToContactThread(
           updatedMessage,
           user.id,
-          selectedUser.id,
+          contactId,
         );
-        
+
         if (isRelevantMessage) {
           const messageWithFlag: Message = {
             ...updatedMessage,
@@ -753,6 +1121,7 @@ export default function ChatPage() {
         schema: 'public',
         table: 'messages',
       }, (payload) => {
+        if (isStaleMessagesRealtimeHandler()) return;
         const oldRow = payload.old as { id?: string } | null;
         const deletedId = oldRow?.id;
         if (!deletedId) return;
@@ -896,6 +1265,28 @@ export default function ChatPage() {
     setBroadcastGroupName(null);
     setSelectedUser(next);
     setShowChat(true);
+    setConversationRemoteActionSpinnerById((prev) => {
+      let changed = false;
+      const out = { ...prev };
+      for (const k of Object.keys(out)) {
+        if (sameConversationContactId(k, next.id)) {
+          delete out[k];
+          changed = true;
+        }
+      }
+      return changed ? out : prev;
+    });
+    setConversationActionResultById((prev) => {
+      if (!(next.id in prev)) return prev;
+      const rest = { ...prev };
+      delete rest[next.id];
+      return rest;
+    });
+    void fetch("/api/conversations/action-indicator", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contactId: next.id, status: null }),
+    }).catch(() => undefined);
 
     const prevUnread = next.unread_count ?? 0;
     if (prevUnread > 0) {
@@ -1266,8 +1657,9 @@ export default function ChatPage() {
       setConversationActionCounts((prev) => {
         const current = prev[targetContactId] ?? 0;
         if (current <= 1) {
-          const { [targetContactId]: _removed, ...rest } = prev;
-          return rest;
+          const next = { ...prev };
+          delete next[targetContactId];
+          return next;
         }
         return {
           ...prev,
@@ -1310,8 +1702,9 @@ export default function ChatPage() {
         setConversationActionCounts((prev) => {
           const current = prev[targetContactId] ?? 0;
           if (current <= 1) {
-            const { [targetContactId]: _removed, ...rest } = prev;
-            return rest;
+            const next = { ...prev };
+            delete next[targetContactId];
+            return next;
           }
           return {
             ...prev,
@@ -1323,25 +1716,70 @@ export default function ChatPage() {
     [selectedUser, broadcastGroupId],
   );
 
-  const handleConversationActionActivity = useCallback((contactId: string, isRunning: boolean) => {
-    if (!contactId) return;
-    setConversationActionCounts((prev) => {
-      const current = prev[contactId] ?? 0;
+  const handleConversationActionActivity = useCallback(
+    (contactId: string, isRunning: boolean, outcome?: "success" | "error") => {
+      if (!contactId) return;
       if (isRunning) {
-        return {
+        setConversationActionResultById((prev) => {
+          if (!(contactId in prev)) return prev;
+          const rest = { ...prev };
+          delete rest[contactId];
+          return rest;
+        });
+        setConversationActionCounts((prev) => ({
           ...prev,
-          [contactId]: current + 1,
-        };
+          [contactId]: (prev[contactId] ?? 0) + 1,
+        }));
+        return;
       }
-      if (current <= 1) {
-        const { [contactId]: _removed, ...rest } = prev;
-        return rest;
-      }
-      return {
-        ...prev,
-        [contactId]: current - 1,
-      };
+      setConversationActionCounts((prev) => {
+        const current = prev[contactId] ?? 0;
+        const nextCount = current - 1;
+        let next: Record<string, number>;
+        if (nextCount <= 0) {
+          const rest = { ...prev };
+          delete rest[contactId];
+          next = rest;
+        } else {
+          next = { ...prev, [contactId]: nextCount };
+        }
+        if (nextCount <= 0 && outcome) {
+          queueMicrotask(() => {
+            setConversationActionResultById((r) => ({ ...r, [contactId]: outcome! }));
+            void fetch("/api/conversations/action-indicator", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contactId, status: outcome }),
+            }).catch(() => undefined);
+          });
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleStopConversationLoading = useCallback((contactId: string) => {
+    if (!contactId) return;
+    // Local-only escape hatch for stuck UI indicator; does not cancel server work.
+    setConversationActionCounts((prev) => {
+      if (!(contactId in prev)) return prev;
+      const rest = { ...prev };
+      delete rest[contactId];
+      return rest;
     });
+    setConversationRemoteActionSpinnerById((prev) => {
+      let changed = false;
+      const out = { ...prev };
+      for (const k of Object.keys(out)) {
+        if (sameConversationContactId(k, contactId)) {
+          delete out[k];
+          changed = true;
+        }
+      }
+      return changed ? out : prev;
+    });
+    setConversationActionResultById((prev) => ({ ...prev, [contactId]: "error" }));
   }, []);
 
   // Show loading state while checking setup
@@ -1417,9 +1855,9 @@ export default function ChatPage() {
               onUserSelect={handleUserSelect}
               currentUserId={user.id}
               providerPhoneNumber={providerPhoneNumber}
-              conversationLoadingById={Object.fromEntries(
-                Object.entries(conversationActionCounts).map(([id, count]) => [id, count > 0]),
-              )}
+              conversationLoadingById={conversationLoadingById}
+              conversationActionResultById={conversationActionResultById}
+              onStopConversationLoading={handleStopConversationLoading}
               onUsersUpdate={refreshUsers}
               onBroadcastToGroup={handleBroadcastToGroup}
               isMobile={false}
@@ -1451,6 +1889,7 @@ export default function ChatPage() {
                 setBroadcastGroupName(null);
               }}
               broadcastGroupName={broadcastGroupName}
+              broadcastGroupId={broadcastGroupId}
             />
           </div>
         </>
@@ -1468,9 +1907,9 @@ export default function ChatPage() {
                 onUserSelect={handleUserSelect}
                 currentUserId={user.id}
                 providerPhoneNumber={providerPhoneNumber}
-                conversationLoadingById={Object.fromEntries(
-                  Object.entries(conversationActionCounts).map(([id, count]) => [id, count > 0]),
-                )}
+                conversationLoadingById={conversationLoadingById}
+                conversationActionResultById={conversationActionResultById}
+                onStopConversationLoading={handleStopConversationLoading}
                 onUsersUpdate={refreshUsers}
                 onBroadcastToGroup={handleBroadcastToGroup}
                 isMobile={true}
@@ -1500,6 +1939,7 @@ export default function ChatPage() {
                 onUpdateName={handleUpdateName}
                 onUsersUpdate={refreshUsers}
                 broadcastGroupName={broadcastGroupName}
+                broadcastGroupId={broadcastGroupId}
               />
       </div>
           )}

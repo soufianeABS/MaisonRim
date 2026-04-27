@@ -27,12 +27,6 @@ type ApiActionRow = {
   auto_send_message?: boolean | null;
 };
 
-type ContactRow = {
-  phone: string;
-  owner_id: string;
-  metadata: unknown;
-};
-
 type MappingTrace = {
   target: string;
   source: string;
@@ -92,6 +86,19 @@ function setMetadataPath(metadata: Record<string, unknown>, path: string, value:
     cur = cur[p] as Record<string, unknown>;
   }
   cur[parts[parts.length - 1]!] = value;
+}
+
+function deleteMetadataPath(metadata: Record<string, unknown>, path: string) {
+  const parts = path.split(".").filter(Boolean);
+  if (parts.length === 0) return;
+  let cur: Record<string, unknown> = metadata;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i]!;
+    const next = cur[p];
+    if (!isRecord(next)) return;
+    cur = next;
+  }
+  delete cur[parts[parts.length - 1]!];
 }
 
 function readPath(source: unknown, path: string): unknown {
@@ -156,6 +163,35 @@ function renderMessageTemplate(params: {
 
     return "";
   });
+}
+
+async function persistContactActionIndicatorError(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ownerId: string,
+  phone: string,
+): Promise<void> {
+  try {
+    const { data: row, error } = await supabase
+      .from("contacts")
+      .select("metadata")
+      .eq("owner_id", ownerId)
+      .eq("phone", phone)
+      .maybeSingle();
+    if (error || !row) return;
+    const meta = isRecord(row.metadata) ? { ...(row.metadata as Record<string, unknown>) } : {};
+    deleteMetadataPath(meta, "ui.dynamic_action_running");
+    setMetadataPath(meta, "ui.action_indicator", {
+      status: "error",
+      updated_at: new Date().toISOString(),
+    });
+    await supabase
+      .from("contacts")
+      .update({ metadata: meta, updated_at: new Date().toISOString() })
+      .eq("owner_id", ownerId)
+      .eq("phone", phone);
+  } catch {
+    // ignore
+  }
 }
 
 async function logActionError(params: {
@@ -269,7 +305,21 @@ export class ActionRunner {
     }
 
     const payload = deepReplacePlaceholders(action.payload_template, ctx);
-    let mappingTrace: MappingTrace[] = [];
+    const mappingTrace: MappingTrace[] = [];
+
+    // Other browsers/tabs: list spinner via DB + Realtime until this run finishes.
+    const inflightMeta = isRecord(contact.metadata)
+      ? { ...(contact.metadata as Record<string, unknown>) }
+      : {};
+    setMetadataPath(inflightMeta, "ui.dynamic_action_running", {
+      started_at: new Date().toISOString(),
+      action_id: action.id,
+    });
+    await supabase
+      .from("contacts")
+      .update({ metadata: inflightMeta, updated_at: new Date().toISOString() })
+      .eq("owner_id", user.id)
+      .eq("phone", contactId);
 
     let responseJson: unknown;
     try {
@@ -327,30 +377,43 @@ export class ActionRunner {
         throw new Error(`API call failed (${res.status})`);
       }
     } catch (e) {
-    // If we already logged the non-2xx failure above, don't duplicate logs.
-    const msg = e instanceof Error ? e.message : String(e);
-    if (!msg.toLowerCase().startsWith("api call failed")) {
-      await logActionError({
-        ownerId: user.id,
-        contactId,
-        actionId: action.id,
-        tagName: tagName || action.tag_name,
-        message: "API call threw",
-        details: {
-          url: action.url,
-          method: action.method,
-          payload,
-          mappingUsed: mappingTrace,
-          error: msg,
-        },
-      });
-    }
+      await persistContactActionIndicatorError(supabase, user.id, contactId);
+      // If we already logged the non-2xx failure above, don't duplicate logs.
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.toLowerCase().startsWith("api call failed")) {
+        await logActionError({
+          ownerId: user.id,
+          contactId,
+          actionId: action.id,
+          tagName: tagName || action.tag_name,
+          message: "API call threw",
+          details: {
+            url: action.url,
+            method: action.method,
+            payload,
+            mappingUsed: mappingTrace,
+            error: msg,
+          },
+        });
+      }
       throw e instanceof Error ? e : new Error("API call failed");
     }
 
-    // Update contact.metadata with raw response
-    const contactRow = contact as unknown as ContactRow;
-    const currentMeta = isRecord(contactRow.metadata) ? { ...(contactRow.metadata as Record<string, unknown>) } : {};
+    // Merge onto latest metadata so we don't drop ui.dynamic_action_running written at start.
+    const { data: contactLatest, error: contactLatestError } = await supabase
+      .from("contacts")
+      .select("metadata")
+      .eq("owner_id", user.id)
+      .eq("phone", contactId)
+      .single();
+    if (contactLatestError || !contactLatest) {
+      throw new Error("Conversation not found");
+    }
+    const currentMeta = isRecord(contactLatest.metadata)
+      ? { ...(contactLatest.metadata as Record<string, unknown>) }
+      : {};
+    deleteMetadataPath(currentMeta, "ui.dynamic_action_running");
+
     const actionKey = tagName || action.tag_name || (statusId ?? "unknown");
     setMetadataPath(currentMeta, `actions.${actionKey}.raw_response`, responseJson);
     setMetadataPath(currentMeta, `actions.${actionKey}.ran_at`, new Date().toISOString());
@@ -422,6 +485,13 @@ export class ActionRunner {
       }
     }
 
+    // List UI: survives refresh / other devices (client also POSTs, but server is source of truth).
+    setMetadataPath(currentMeta, "ui.action_indicator", {
+      status: "success",
+      updated_at: new Date().toISOString(),
+    });
+    update.metadata = currentMeta;
+
     const { error: updateError } = await supabase
       .from("contacts")
       .update({ ...update, updated_at: new Date().toISOString() })
@@ -437,6 +507,7 @@ export class ActionRunner {
         message: "Failed to persist action result",
         details: { updateError: updateError.message, mappingUsed: mappingTrace },
       });
+      await persistContactActionIndicatorError(supabase, user.id, contactId);
       throw new Error("Failed to save action result");
     }
 
